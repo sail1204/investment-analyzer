@@ -133,25 +133,35 @@ def _is_weekday() -> bool:
 
 
 def schedule_daily():
-    """Run on a daily schedule using APScheduler (weekdays only, noon local time)."""
+    """Run on a daily schedule using APScheduler (weekdays only, noon in SCHEDULER_TZ)."""
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
+    import pytz
+
+    tz_name = os.getenv("SCHEDULER_TZ", "UTC")
+    try:
+        tz = pytz.timezone(tz_name)
+    except pytz.UnknownTimeZoneError:
+        logger.warning(f"Unknown timezone '{tz_name}', falling back to UTC")
+        tz = pytz.utc
 
     def _guarded_run():
-        if not _is_weekday():
+        from datetime import datetime
+        now = datetime.now(tz)
+        if now.weekday() >= 5:
             logger.info("[Scheduler] Weekend — skipping run.")
             return
         run()
 
-    scheduler = BlockingScheduler()
+    scheduler = BlockingScheduler(timezone=tz)
     scheduler.add_job(
         _guarded_run,
-        trigger=CronTrigger(hour=12, minute=0),
+        trigger=CronTrigger(hour=12, minute=0, timezone=tz),
         id="daily_run",
         name="Investment Analyzer Daily Run",
         replace_existing=True,
     )
-    logger.info("Scheduler started. Fires every day at 12:00 noon (weekdays only).")
+    logger.info(f"Scheduler started. Fires weekdays at 12:00 noon {tz_name}.")
     logger.info("Press Ctrl+C to stop.")
     try:
         scheduler.start()

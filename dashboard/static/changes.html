@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Changes — Investment Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f8fafc; }
+
+    /* Nav */
+    nav a { padding: 4px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; color: rgba(255,255,255,0.8); transition: background 0.15s; text-decoration: none; }
+    nav a:hover, nav a.active { background: rgba(255,255,255,0.2); color: #fff; }
+
+    /* Markdown prose styles */
+    .prose h1 { font-size: 1.75rem; font-weight: 800; color: #0f172a; margin: 0 0 8px; letter-spacing: -0.03em; }
+    .prose h2 { font-size: 1rem; font-weight: 700; color: #0f172a; margin: 28px 0 10px; padding: 10px 16px; background: #f8fafc; border-left: 3px solid #6366f1; border-radius: 0 8px 8px 0; }
+    .prose h3 { font-size: 0.95rem; font-weight: 700; color: #1e293b; margin: 20px 0 6px; }
+    .prose p { color: #334155; line-height: 1.75; margin: 0 0 14px; font-size: 0.9rem; }
+    .prose ul, .prose ol { color: #334155; line-height: 1.75; margin: 0 0 14px; padding-left: 24px; font-size: 0.9rem; }
+    .prose li { margin-bottom: 6px; }
+    .prose strong { color: #0f172a; font-weight: 700; }
+    .prose a { color: #6366f1; text-decoration: none; }
+    .prose a:hover { text-decoration: underline; }
+    .prose hr { border: none; border-top: 1px solid #e2e8f0; margin: 24px 0; }
+    .prose blockquote { border-left: 4px solid #6366f1; background: rgba(99,102,241,0.05); padding: 12px 18px; margin: 16px 0; border-radius: 0 8px 8px 0; color: #475569; }
+    .prose blockquote p { margin: 0; }
+    .prose code { background: #f1f5f9; color: #4f46e5; padding: 2px 6px; border-radius: 4px; font-size: 0.82rem; font-family: 'SF Mono', 'Fira Code', monospace; }
+    .prose pre { background: #1e293b; color: #e2e8f0; padding: 20px 24px; border-radius: 12px; overflow-x: auto; margin: 16px 0; }
+    .prose pre code { background: transparent; color: inherit; padding: 0; font-size: 0.82rem; }
+    .prose table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.875rem; }
+    .prose thead th { background: #f8fafc; color: #64748b; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 10px 14px; text-align: left; border-bottom: 2px solid #e2e8f0; }
+    .prose tbody tr { border-bottom: 1px solid #f1f5f9; }
+    .prose tbody tr:hover { background: #f8fafc; }
+    .prose tbody td { padding: 10px 14px; color: #334155; vertical-align: top; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header style="background: linear-gradient(135deg, #4f46e5, #6366f1); padding: 0 24px; height: 56px; display:flex; align-items:center; gap:16px; box-shadow: 0 2px 8px rgba(79,70,229,0.3); position:sticky; top:0; z-index:50;">
+    <span style="font-size:1.1rem; font-weight:700; color:white; letter-spacing:-0.02em;">📈 Investment Analyzer</span>
+    <div style="flex:1"></div>
+    <nav style="display:flex; gap:4px;">
+      <a href="/">Summary</a>
+      <a href="/portfolio">Portfolio</a>
+      <a href="/corrections">Corrections</a>
+      <a href="/accuracy">Accuracy</a>
+      <a href="/about">About</a>
+      <a href="/changes" class="active">Changes</a>
+    </nav>
+  </header>
+
+  <div style="padding: 28px 32px; max-width: 900px; margin: 0 auto;">
+    <div id="content" style="background:white; border-radius:16px; border:1px solid #e2e8f0; box-shadow:0 1px 6px rgba(0,0,0,0.04); padding:40px 48px;">
+      <div id="loading" style="color:#94a3b8; font-size:0.9rem; text-align:center; padding: 40px 0;">Loading...</div>
+      <div id="md-body" class="prose" style="display:none;"></div>
+    </div>
+  </div>
+
+  <script>
+    fetch('/api/changelog')
+      .then(r => r.text())
+      .then(md => {
+        document.getElementById('md-body').innerHTML = marked.parse(md);
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('md-body').style.display = 'block';
+      })
+      .catch(() => {
+        document.getElementById('loading').textContent = 'Could not load changelog.';
+      });
+  </script>
+</body>
+</html>

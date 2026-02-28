@@ -10,7 +10,7 @@ from typing import Optional
 import pandas as pd
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -32,6 +32,7 @@ init_db()
 app = FastAPI(title="Investment Analyzer API")
 
 STATIC_DIR = Path(__file__).parent / "static"
+ROOT_DIR = Path(__file__).parent.parent
 
 # ── Price cache ────────────────────────────────────────────────────────────────
 _price_cache: dict = {}
@@ -105,6 +106,16 @@ def api_corrections():
     return get_all_corrections() or []
 
 
+@app.get("/api/readme")
+def api_readme():
+    return PlainTextResponse((ROOT_DIR / "README.md").read_text())
+
+
+@app.get("/api/changelog")
+def api_changelog():
+    return PlainTextResponse((ROOT_DIR / "CHANGELOG.md").read_text())
+
+
 @app.get("/api/portfolio")
 def api_portfolio():
     positions = get_portfolio()
@@ -156,6 +167,16 @@ def page_accuracy():
 @app.get("/portfolio")
 def page_portfolio():
     return FileResponse(STATIC_DIR / "portfolio.html")
+
+
+@app.get("/about")
+def page_about():
+    return FileResponse(STATIC_DIR / "about.html")
+
+
+@app.get("/changes")
+def page_changes():
+    return FileResponse(STATIC_DIR / "changes.html")
 
 
 # Mount static assets (CSS overrides, any future assets)

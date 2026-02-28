@@ -1,0 +1,33 @@
+# Environment / secrets
+.env
+.env.*
+
+# Database (persisted by Railway volume, not in git)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Edgar cache
+.edgar/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

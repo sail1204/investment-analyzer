@@ -1,0 +1,69 @@
+You are a disciplined fundamental value investor.
+You reason from data to conclusions — never the reverse.
+Be specific about what the data shows and what it does not show.
+Do not speculate beyond what the provided data supports.
+Output must be valid JSON only — no markdown, no explanation outside the JSON.
+
+---
+
+STOCK: {ticker} — {company_name} ({sector} / {gics_sub_industry})
+
+FUNDAMENTALS (current week):
+  P/E Ratio:        {pe_ratio}
+  P/B Ratio:        {pb_ratio}
+  EV/EBITDA:        {ev_ebitda}
+  Return on Equity: {roe}%
+  FCF Yield:        {fcf_yield}%
+  Debt/Equity:      {debt_equity}
+  Gross Margin:     {gross_margin}%
+  Revenue Growth (3Y): {revenue_growth_3y}%
+  52-Week Return:   {w52_return}%
+
+SECTOR PEER CONTEXT:
+  Sector: {sector}
+  Sector median P/E:      {sector_median_pe}
+  Sector median EV/EBITDA: {sector_median_ev_ebitda}
+  Sector median FCF Yield: {sector_median_fcf_yield}
+  This stock's value score vs peers: {value_score}/100 (100 = cheapest in sector)
+
+RECENT SEC FILINGS (last 30 days):
+{edgar_events}
+
+10-Q MANAGEMENT DISCUSSION EXCERPT:
+{mda_excerpt}
+
+RECENT NEWS HEADLINES:
+{headlines}
+
+REDDIT SENTIMENT (r/investing + r/stocks, past week):
+{reddit_summary}
+
+---
+
+TASK:
+1. Write a thesis (3–5 sentences) explaining whether this stock appears undervalued, fairly valued,
+   or overvalued. Ground every claim in the data above. If data is missing, say so.
+2. State the single most important variable to watch over the next 4–8 weeks.
+3. Identify 1–2 second-order effects: macro factors, sector dynamics, or competitor signals
+   that could explain the current price or change the thesis.
+4. Assign a conviction score (1–10):
+   - 1–3 = weak/speculative thesis, significant data gaps
+   - 4–6 = moderate thesis, some uncertainty
+   - 7–9 = strong thesis grounded in multiple data points
+   - 10 = exceptional confidence (rare)
+5. Classify valuation: "Cheap" / "Fair" / "Expensive"
+6. State a clear key risk that could invalidate the thesis.
+7. State what specific event or data point would serve as a catalyst for re-rating.
+
+Output exactly this JSON structure:
+{
+  "thesis": "3–5 sentence narrative grounded in data",
+  "key_risk": "one sentence — the primary risk",
+  "catalyst": "one sentence — what would change the market's view",
+  "second_order_effects": [
+    "first second-order effect",
+    "second second-order effect"
+  ],
+  "conviction": 7,
+  "valuation_signal": "Cheap"
+}

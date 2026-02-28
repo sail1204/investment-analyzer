@@ -1,0 +1,61 @@
+You are a financial analyst reviewing your own prior work with intellectual honesty.
+Your goal is to assess whether new information confirms, updates, or contradicts your prior thesis.
+Be precise about what changed and why. Separate what you knew then from what is known now.
+Output must be valid JSON only — no markdown, no explanation outside the JSON.
+
+---
+
+STOCK: {ticker} — {company_name}
+
+PRIOR THESIS (Week {prior_run_date}):
+"{prior_thesis}"
+
+Prior conviction: {prior_conviction}/10
+Prior valuation signal: {prior_valuation_signal}
+
+---
+
+NEW INFORMATION (Week {current_run_date}):
+
+Price change since prior week: {price_change_pct}%
+Current price: ${current_price}
+
+New SEC filings (8-K events since prior week):
+{new_edgar_events}
+
+New news headlines:
+{new_headlines}
+
+Fundamentals change (current vs prior week):
+  P/E:      {prior_pe} → {current_pe}
+  EV/EBITDA: {prior_ev_ebitda} → {current_ev_ebitda}
+  FCF Yield: {prior_fcf_yield}% → {current_fcf_yield}%
+
+---
+
+TASK:
+1. Assess whether the new information CONFIRMS, UPDATES, or CONTRADICTS the prior thesis.
+   - CONFIRMS: New data is consistent with the thesis; no material change in view.
+   - UPDATES: Thesis is refined or adjusted but directionally the same.
+   - CONTRADICTS: The thesis was directionally wrong given what happened.
+
+2. If CONTRADICTS — classify the error type:
+   - "Exogenous Shock": A new, unpredictable event occurred that invalidated the thesis
+     (e.g., regulatory action, CEO departure, geopolitical shock). Not a modeling error.
+   - "Timing Error": The thesis direction was correct but the timeframe was wrong.
+     The thesis may still play out.
+   - "Thesis Error": The reasoning was fundamentally flawed given information available at the time.
+   - "Data Gap": A key signal was available but was not incorporated into the thesis.
+
+3. Write an updated thesis (3–5 sentences) reflecting your current view.
+
+4. Optionally update conviction score if materially changed.
+
+Output exactly this JSON structure:
+{
+  "drift_signal": "Stable" | "Updated" | "Contradicted",
+  "error_type": null | "Exogenous Shock" | "Timing Error" | "Thesis Error" | "Data Gap",
+  "explanation": "2–3 sentences explaining what changed and why the drift signal was assigned",
+  "updated_thesis": "3–5 sentence updated thesis",
+  "updated_conviction": 7
+}

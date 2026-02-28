@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Detail — Investment Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js" charset="utf-8"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f8fafc; margin:0; }
+
+    nav a { padding: 4px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; color: rgba(255,255,255,0.8); transition: background 0.15s; text-decoration: none; }
+    nav a:hover { background: rgba(255,255,255,0.2); color: #fff; }
+
+    .pill { display:inline-block; padding:4px 12px; border-radius:999px; font-size:0.75rem; font-weight:700; letter-spacing:0.03em; }
+
+    /* KPI cards */
+    .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 20px; }
+    .kpi-card { background: white; border-radius: 12px; border: 1px solid #e2e8f0; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+    .kpi-label { font-size: 0.72rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .kpi-value { font-size: 1.5rem; font-weight: 700; color: #0f172a; line-height: 1; }
+
+    /* Conviction bar */
+    .conv-track { background: #e2e8f0; border-radius: 999px; height: 6px; margin-bottom: 24px; max-width: 400px; }
+    .conv-fill  { background: linear-gradient(90deg, #818cf8, #4f46e5); border-radius: 999px; height: 6px; transition: width 0.5s ease; }
+
+    /* Section card */
+    .card { background: white; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 1px 6px rgba(0,0,0,0.04); padding: 24px; }
+
+    /* Metric rows */
+    .metric-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-label { font-size: 0.82rem; color: #64748b; }
+    .metric-value { font-size: 0.875rem; font-weight: 600; color: #0f172a; }
+
+    /* Thesis / Risk / Catalyst boxes */
+    .thesis-box   { background: rgba(99,102,241,0.05); border-left: 3px solid #6366f1; border-radius: 0 10px 10px 0; padding: 16px 20px; line-height: 1.7; font-size: 0.92rem; color: #334155; }
+    .risk-box     { background: rgba(239,68,68,0.05);  border-left: 3px solid #ef4444; border-radius: 0 10px 10px 0; padding: 14px 18px; font-size: 0.88rem; color: #334155; line-height: 1.6; }
+    .catalyst-box { background: rgba(34,197,94,0.05);  border-left: 3px solid #22c55e; border-radius: 0 10px 10px 0; padding: 14px 18px; font-size: 0.88rem; color: #334155; line-height: 1.6; }
+
+    .section-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin-bottom: 8px; }
+
+    /* What-changed blocks */
+    .info-block { background: #f8fafc; border-radius: 10px; padding: 14px 18px; font-size: 0.88rem; color: #334155; line-height: 1.65; margin-bottom: 10px; }
+    .info-block strong { color: #475569; }
+
+    @media (max-width: 900px) {
+      .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+      .main-cols { flex-direction: column !important; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header style="background: linear-gradient(135deg, #4f46e5, #6366f1); padding: 0 24px; height: 56px; display:flex; align-items:center; gap:16px; box-shadow: 0 2px 8px rgba(79,70,229,0.3); position:sticky; top:0; z-index:50;">
+    <span style="font-size:1.1rem; font-weight:700; color:white; letter-spacing:-0.02em;">📈 Investment Analyzer</span>
+    <div style="flex:1"></div>
+    <nav style="display:flex; gap:4px;">
+      <a href="/">Summary</a>
+      <a href="/portfolio">Portfolio</a>
+      <a href="/corrections">Corrections</a>
+      <a href="/accuracy">Accuracy</a>
+    </nav>
+  </header>
+
+  <div style="padding: 24px 32px; max-width: 1400px; margin: 0 auto;" id="page">
+    <p style="color:#94a3b8; text-align:center; margin-top:80px;">Loading…</p>
+  </div>
+
+  <script>
+    const ticker = decodeURIComponent(window.location.pathname.replace('/stock/', '').replace(/\//g,''));
+
+    const SIGNAL_STYLE = { Cheap:'background:#dcfce7;color:#15803d', Fair:'background:#f1f5f9;color:#475569', Expensive:'background:#fee2e2;color:#b91c1c' };
+    const DRIFT_STYLE  = { Stable:'background:#dcfce7;color:#15803d', Updated:'background:#fef3c7;color:#b45309', Contradicted:'background:#fee2e2;color:#b91c1c', New:'background:#e0f2fe;color:#0369a1' };
+
+    const pill  = (t, map) => `<span class="pill" style="${map[t]||'background:#f1f5f9;color:#475569'}">${t||'—'}</span>`;
+    const esc   = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const fmt   = (v, suf='', dp=1) => v != null ? Number(v).toFixed(dp)+suf : '—';
+
+    function kpiCard(label, value, color) {
+      const vStyle = color ? `color:${color}` : 'color:#0f172a';
+      return `<div class="kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value" style="${vStyle}">${value}</div></div>`;
+    }
+
+    function metricRow(label, value) {
+      return `<div class="metric-row"><span class="metric-label">${label}</span><span class="metric-value">${value}</span></div>`;
+    }
+
+    function renderSOE(raw) {
+      if (!raw) return '';
+      try {
+        const items = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!items?.length) return '';
+        return `<div style="margin-top:20px">
+          <div class="section-title">Second-Order Effects</div>
+          <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;">
+            ${items.map(e => `<li style="display:flex;gap:8px;font-size:0.875rem;color:#475569"><span style="color:#c7d2fe;flex-shrink:0;margin-top:2px">▸</span><span>${esc(e)}</span></li>`).join('')}
+          </ul></div>`;
+      } catch { return ''; }
+    }
+
+    function render(data) {
+      const s = data.snapshot;
+      const corrs = (data.corrections||[]).sort((a,b)=>b.run_date.localeCompare(a.run_date));
+      const lc    = corrs[0] || null;
+
+      const signal = s.valuation_signal || 'Fair';
+      const drift  = lc?.drift_signal || 'New';
+      const conv   = Number(s.conviction || 0);
+      const chg    = s.price_change_1w;
+      const chgColor = chg != null ? (chg >= 0 ? '#16a34a' : '#dc2626') : null;
+      const chgStr   = chg != null ? `${chg>=0?'+':''}${Number(chg).toFixed(1)}%` : '—';
+
+      document.title = `${s.ticker} · Investment Analyzer`;
+
+      document.getElementById('page').innerHTML = `
+        <!-- Back link -->
+        <a href="/" style="display:inline-flex;align-items:center;gap:6px;color:#6366f1;font-size:0.875rem;font-weight:500;text-decoration:none;margin-bottom:20px;">
+          ← Back to Summary
+        </a>
+
+        <!-- Stock header -->
+        <div style="margin-bottom:20px;">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
+            <h1 style="font-size:1.75rem;font-weight:800;color:#0f172a;margin:0;letter-spacing:-0.03em;">${esc(s.ticker)}</h1>
+            <span style="font-size:1rem;color:#64748b;font-weight:400;">${esc(s.company_name||'')}</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            ${pill(signal, SIGNAL_STYLE)}
+            ${pill(drift, DRIFT_STYLE)}
+            <span style="color:#94a3b8;font-size:0.85rem;">
+              ${esc(s.sector||'')}${s.gics_sub_industry ? ' &middot; '+esc(s.gics_sub_industry) : ''}
+              &middot; Week ${esc(s.run_date||'')}
+            </span>
+          </div>
+        </div>
+
+        <!-- KPI strip -->
+        <div class="kpi-grid">
+          ${kpiCard('Price',       s.price != null ? '$'+Number(s.price).toFixed(2) : '—')}
+          ${kpiCard('1W Change',   chgStr, chgColor)}
+          ${kpiCard('Conviction',  conv+'/10')}
+          ${kpiCard('Weeks Held',  s.thesis_age_weeks||1)}
+          ${kpiCard('Value Score', fmt(s.value_score)+'/100')}
+        </div>
+
+        <!-- Conviction bar -->
+        <div style="margin-bottom:24px;">
+          <div style="font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">
+            Conviction ${conv}/10
+          </div>
+          <div class="conv-track" style="max-width:320px;">
+            <div class="conv-fill" style="width:${conv*10}%"></div>
+          </div>
+        </div>
+
+        <!-- Price chart -->
+        <div class="card" style="margin-bottom:20px;padding:16px;">
+          <div class="section-title" style="margin-bottom:12px;">1-Year Price Chart · ${esc(s.ticker)}</div>
+          <div style="position:relative;height:280px;width:100%;">
+            <div id="chart-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:0.85rem;pointer-events:none;">
+              Loading chart…
+            </div>
+            <div id="price-chart" style="height:280px;width:100%;"></div>
+          </div>
+        </div>
+
+        <!-- Main content: fundamentals + thesis -->
+        <div class="main-cols" style="display:flex;gap:20px;align-items:flex-start;margin-bottom:20px;">
+
+          <!-- Left: Fundamentals -->
+          <div class="card" style="width:260px;flex-shrink:0;">
+            <div class="section-title">Fundamentals</div>
+            ${metricRow('P/E Ratio',     fmt(s.pe_ratio,     'x'))}
+            ${metricRow('P/B Ratio',     fmt(s.pb_ratio,     'x'))}
+            ${metricRow('EV/EBITDA',     fmt(s.ev_ebitda,    'x'))}
+            ${metricRow('FCF Yield',     fmt(s.fcf_yield,    '%'))}
+            ${metricRow('ROE',           fmt(s.roe,          '%'))}
+            ${metricRow('Debt / Equity', fmt(s.debt_equity,  'x'))}
+            ${metricRow('Value Score',   fmt(s.value_score))}
+            ${metricRow('Quality Score', fmt(s.quality_score))}
+          </div>
+
+          <!-- Right: Thesis -->
+          <div class="card" style="flex:1;min-width:0;">
+            <div class="section-title">Agent Thesis</div>
+            <div class="thesis-box" style="margin-bottom:16px;">${esc(s.thesis||'Thesis not yet generated.')}</div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:4px;">
+              <div>
+                <div class="section-title">Key Risk</div>
+                <div class="risk-box">${esc(s.key_risk||'—')}</div>
+              </div>
+              <div>
+                <div class="section-title">Catalyst</div>
+                <div class="catalyst-box">${esc(s.catalyst||'—')}</div>
+              </div>
+            </div>
+
+            ${renderSOE(s.second_order_effects)}
+          </div>
+        </div>
+
+        <!-- What changed -->
+        ${lc ? `
+        <div class="card" style="margin-bottom:20px;">
+          <div class="section-title" style="margin-bottom:12px;">What Changed This Week</div>
+          <div class="info-block"><strong>What happened:</strong> ${esc(lc.what_happened)}</div>
+          <div class="info-block"><strong>Agent's explanation:</strong> ${esc(lc.agents_explanation)}</div>
+        </div>` : ''}
+      `;
+
+      // Load price chart
+      fetch(`/api/price-history/${ticker}`)
+        .then(r => r.json())
+        .then(hist => {
+          const loading = document.getElementById('chart-loading');
+          const el      = document.getElementById('price-chart');
+          if (!hist.length) {
+            if (loading) loading.textContent = 'Price history unavailable.';
+            return;
+          }
+          if (loading) loading.style.display = 'none';
+          Plotly.newPlot(el, [{
+            x: hist.map(h=>h.date), y: hist.map(h=>h.close),
+            type:'scatter', mode:'lines', fill:'tozeroy',
+            fillcolor:'rgba(99,102,241,0.08)',
+            line:{ color:'#6366f1', width:2 },
+            hovertemplate:'<b>%{x}</b><br>$%{y:.2f}<extra></extra>',
+          }], {
+            height: 280, margin:{ t:8, b:40, l:55, r:12 },
+            hovermode:'x unified',
+            xaxis:{ showgrid:false, tickfont:{size:11,color:'#94a3b8'} },
+            yaxis:{ showgrid:true, gridcolor:'rgba(226,232,240,0.8)', tickprefix:'$', tickfont:{size:11,color:'#94a3b8'} },
+            plot_bgcolor:'white', paper_bgcolor:'white',
+          }, { responsive:true, displayModeBar:false });
+        });
+    }
+
+    fetch(`/api/stock/${ticker}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.snapshot) {
+          document.getElementById('page').innerHTML =
+            `<a href="/" style="color:#6366f1;text-decoration:none;font-size:0.875rem;">← Back</a>
+             <p style="color:#94a3b8;text-align:center;margin-top:80px;">No data found for <strong>${esc(ticker)}</strong>.</p>`;
+          return;
+        }
+        render(data);
+      });
+  </script>
+</body>
+</html>

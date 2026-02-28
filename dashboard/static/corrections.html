@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Correction Log — Investment Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:0.72em; font-weight:700; }
+    .pill-stable       { background:#dcfce7; color:#15803d; }
+    .pill-updated      { background:#fef3c7; color:#b45309; }
+    .pill-contradicted { background:#fee2e2; color:#b91c1c; }
+    .pill-new          { background:#e0f2fe; color:#0369a1; }
+    th { cursor:pointer; user-select:none; }
+    th:hover { background:#e0e7ff; }
+    tr.data-row:hover { background:#eef2ff; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <header class="bg-indigo-600 text-white px-6 py-3 flex items-center gap-6 shadow-md sticky top-0 z-10">
+    <span class="text-xl font-bold">📈 Investment Analyzer</span>
+    <div class="flex-1"></div>
+    <a href="/" class="text-white/80 hover:text-white text-sm font-medium">Summary</a>
+    <a href="/portfolio" class="text-white/80 hover:text-white text-sm font-medium">Portfolio</a>
+    <a href="/corrections" class="text-white hover:text-white text-sm font-medium border-b border-white/60">Corrections</a>
+    <a href="/accuracy" class="text-white/80 hover:text-white text-sm font-medium">Accuracy</a>
+  </header>
+
+  <main class="px-6 py-5 max-w-screen-2xl mx-auto">
+    <h1 class="text-2xl font-bold mb-1">Self-Correction Log</h1>
+    <p class="text-sm text-gray-400 mb-4">
+      Generated each week when new data arrives. Builds up after the second weekly run.
+    </p>
+
+    <div id="empty-msg" class="hidden text-gray-400 mt-8 text-center">
+      No corrections yet — run the agent for at least 2 consecutive weeks.
+    </div>
+
+    <div id="table-wrap" class="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm hidden">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+            <th class="px-4 py-3 text-left">Week</th>
+            <th class="px-4 py-3 text-left">Ticker</th>
+            <th class="px-4 py-3 text-left">Drift</th>
+            <th class="px-4 py-3 text-left">Error Type</th>
+            <th class="px-4 py-3 text-left" style="min-width:280px">What Happened</th>
+            <th class="px-4 py-3 text-left" style="min-width:380px">Agent's Explanation</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    const esc = s => String(s||'—').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    function pillDrift(v) {
+      const map = { Stable:'stable', Updated:'updated', Contradicted:'contradicted', New:'new' };
+      return `<span class="pill pill-${map[v]||'new'}">${v||'—'}</span>`;
+    }
+
+    fetch('/api/corrections')
+      .then(r => r.json())
+      .then(rows => {
+        if (!rows.length) {
+          document.getElementById('empty-msg').classList.remove('hidden');
+          return;
+        }
+        document.getElementById('table-wrap').classList.remove('hidden');
+
+        const tbody = document.getElementById('tbody');
+        tbody.innerHTML = rows.map(r => `
+          <tr class="data-row border-t border-gray-100">
+            <td class="px-4 py-3 whitespace-nowrap text-gray-500">${esc(r.run_date)}</td>
+            <td class="px-4 py-3 whitespace-nowrap">
+              <a href="/stock/${esc(r.ticker)}" class="font-bold text-indigo-600 hover:underline">${esc(r.ticker)}</a>
+            </td>
+            <td class="px-4 py-3">${pillDrift(r.drift_signal)}</td>
+            <td class="px-4 py-3 text-gray-500 whitespace-nowrap">${esc(r.error_type)}</td>
+            <td class="px-4 py-3 text-gray-600 text-xs leading-relaxed">${esc(r.what_happened)}</td>
+            <td class="px-4 py-3 text-gray-600 text-xs leading-relaxed">${esc(r.agents_explanation)}</td>
+          </tr>`).join('');
+      });
+  </script>
+</body>
+</html>

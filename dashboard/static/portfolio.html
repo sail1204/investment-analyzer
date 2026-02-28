@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portfolio — Investment Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js" charset="utf-8"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; margin: 0; }
+
+    nav a { padding: 4px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; color: rgba(255,255,255,0.8); transition: background 0.15s; text-decoration: none; }
+    nav a:hover { background: rgba(255,255,255,0.2); color: #fff; }
+    nav a.active { background: rgba(255,255,255,0.2); color: #fff; }
+
+    .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 20px; }
+    .kpi-card { background: white; border-radius: 12px; border: 1px solid #e2e8f0; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+    .kpi-label { font-size: 0.72rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .kpi-value { font-size: 1.5rem; font-weight: 700; color: #0f172a; line-height: 1; }
+
+    .card { background: white; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 1px 6px rgba(0,0,0,0.04); padding: 24px; margin-bottom: 20px; }
+    .card-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin-bottom: 16px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    thead tr { background: #f8fafc; }
+    th { padding: 10px 14px; text-align: left; font-size: 0.72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+    td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+    .badge-buy  { background: #dcfce7; color: #15803d; }
+    .badge-sell { background: #fee2e2; color: #b91c1c; }
+
+    .pos { color: #16a34a; }
+    .neg { color: #dc2626; }
+
+    @media (max-width: 900px) {
+      .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header style="background: linear-gradient(135deg, #4f46e5, #6366f1); padding: 0 24px; height: 56px; display:flex; align-items:center; gap:16px; box-shadow: 0 2px 8px rgba(79,70,229,0.3); position:sticky; top:0; z-index:50;">
+    <span style="font-size:1.1rem; font-weight:700; color:white; letter-spacing:-0.02em;">📈 Investment Analyzer</span>
+    <div style="flex:1"></div>
+    <nav style="display:flex; gap:4px;">
+      <a href="/">Summary</a>
+      <a href="/portfolio" class="active">Portfolio</a>
+      <a href="/corrections">Corrections</a>
+      <a href="/accuracy">Accuracy</a>
+    </nav>
+  </header>
+
+  <div style="padding: 24px 32px; max-width: 1400px; margin: 0 auto;">
+
+    <h1 style="font-size:1.5rem; font-weight:800; color:#0f172a; margin:0 0 4px; letter-spacing:-0.02em;">Paper Trading Portfolio</h1>
+    <p style="color:#94a3b8; font-size:0.875rem; margin:0 0 20px;">Starting budget: 1,000 pts &nbsp;·&nbsp; 1 point = $1 USD &nbsp;·&nbsp; Long only &nbsp;·&nbsp; Daily at noon</p>
+
+    <!-- KPI strip -->
+    <div class="kpi-grid" id="kpi-strip">
+      <div class="kpi-card"><div class="kpi-label">Total Value</div><div class="kpi-value" id="kpi-total">—</div></div>
+      <div class="kpi-card"><div class="kpi-label">Cash Available</div><div class="kpi-value" id="kpi-cash">—</div></div>
+      <div class="kpi-card"><div class="kpi-label">Invested</div><div class="kpi-value" id="kpi-invested">—</div></div>
+      <div class="kpi-card"><div class="kpi-label">P&amp;L vs 1,000 pts</div><div class="kpi-value" id="kpi-pnl">—</div></div>
+      <div class="kpi-card"><div class="kpi-label">Positions</div><div class="kpi-value" id="kpi-pos">—</div></div>
+    </div>
+
+    <!-- Equity curve -->
+    <div class="card">
+      <div class="card-title">Portfolio Value Over Time</div>
+      <div style="position:relative; height:260px; width:100%;">
+        <div id="chart-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:0.85rem;pointer-events:none;">
+          Loading chart…
+        </div>
+        <div id="equity-chart" style="height:260px; width:100%;"></div>
+      </div>
+    </div>
+
+    <!-- Current positions -->
+    <div class="card">
+      <div class="card-title">Current Positions</div>
+      <div id="positions-empty" style="display:none; color:#94a3b8; text-align:center; padding:32px 0; font-size:0.875rem;">
+        No open positions yet.
+      </div>
+      <div id="positions-wrap" style="overflow-x:auto;">
+        <table id="positions-table">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Company</th>
+              <th>Pts Invested</th>
+              <th>Cur Value</th>
+              <th>P&amp;L</th>
+              <th>P&amp;L %</th>
+              <th>Buy Price</th>
+              <th>Cur Price</th>
+              <th>Shares</th>
+              <th>Days Held</th>
+            </tr>
+          </thead>
+          <tbody id="positions-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Transaction log -->
+    <div class="card">
+      <div class="card-title">Transaction Log</div>
+      <div id="tx-empty" style="display:none; color:#94a3b8; text-align:center; padding:32px 0; font-size:0.875rem;">
+        No transactions yet.
+      </div>
+      <div id="tx-wrap" style="overflow-x:auto;">
+        <table id="tx-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Action</th>
+              <th>Ticker</th>
+              <th>Points</th>
+              <th>Price</th>
+              <th>Shares</th>
+              <th>P&amp;L</th>
+              <th style="min-width:280px;">Reasoning</th>
+            </tr>
+          </thead>
+          <tbody id="tx-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const esc  = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const fmt  = (v, dp=1) => v != null ? Number(v).toFixed(dp) : '—';
+    const fmtPts = v => v != null ? Number(v).toFixed(1) + ' pts' : '—';
+    const fmtUSD = v => v != null ? '$' + Number(v).toFixed(2) : '—';
+
+    function pnlClass(v) { return v == null ? '' : (v >= 0 ? 'pos' : 'neg'); }
+    function pnlSign(v)  { return v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(1); }
+    function pnlPct(v)   { return v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(1) + '%'; }
+
+    function daysSince(dateStr) {
+      if (!dateStr) return '—';
+      const d = new Date(dateStr);
+      const diff = Math.floor((Date.now() - d.getTime()) / 86400000);
+      return diff;
+    }
+
+    // ── KPI strip ──────────────────────────────────────────────────────────────
+    fetch('/api/portfolio')
+      .then(r => r.json())
+      .then(data => {
+        const { positions, cash, total_value, invested_value } = data;
+        const pnl     = total_value != null ? total_value - 1000 : null;
+        const pnlPct  = pnl != null ? (pnl / 1000 * 100) : null;
+
+        document.getElementById('kpi-total').textContent    = total_value != null ? total_value.toFixed(1) + ' pts' : '—';
+        document.getElementById('kpi-cash').textContent     = cash != null ? cash.toFixed(1) + ' pts' : '—';
+        document.getElementById('kpi-invested').textContent = invested_value != null ? invested_value.toFixed(1) + ' pts' : '—';
+        document.getElementById('kpi-pos').textContent      = positions ? positions.length : '0';
+
+        const pnlEl = document.getElementById('kpi-pnl');
+        if (pnl != null) {
+          const sign = pnl >= 0 ? '+' : '';
+          pnlEl.textContent = sign + pnl.toFixed(1) + ' (' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%)';
+          pnlEl.style.color = pnl >= 0 ? '#16a34a' : '#dc2626';
+        }
+
+        // Render positions table
+        const tbody = document.getElementById('positions-tbody');
+        if (!positions || !positions.length) {
+          document.getElementById('positions-wrap').style.display = 'none';
+          document.getElementById('positions-empty').style.display = 'block';
+        } else {
+          tbody.innerHTML = positions.map(p => {
+            const pnlVal = p.unrealized_pnl;
+            const pnlPctVal = p.points_invested ? (pnlVal / p.points_invested * 100) : null;
+            return `<tr>
+              <td><a href="/stock/${esc(p.ticker)}" style="color:#6366f1;font-weight:700;text-decoration:none;">${esc(p.ticker)}</a></td>
+              <td style="color:#64748b;">${esc(p.company_name || '—')}</td>
+              <td>${fmtPts(p.points_invested)}</td>
+              <td>${fmtPts(p.current_value)}</td>
+              <td class="${pnlClass(pnlVal)}">${pnlSign(pnlVal)} pts</td>
+              <td class="${pnlClass(pnlPctVal)}">${pnlPct(pnlPctVal)}</td>
+              <td>${fmtUSD(p.buy_price)}</td>
+              <td>${fmtUSD(p.current_price)}</td>
+              <td style="color:#94a3b8;">${p.shares != null ? Number(p.shares).toFixed(4) : '—'}</td>
+              <td style="color:#94a3b8;">${daysSince(p.buy_date)}</td>
+            </tr>`;
+          }).join('');
+        }
+      });
+
+    // ── Equity curve ───────────────────────────────────────────────────────────
+    fetch('/api/portfolio/history')
+      .then(r => r.json())
+      .then(hist => {
+        const loading = document.getElementById('chart-loading');
+        const el      = document.getElementById('equity-chart');
+        if (!hist || !hist.length) {
+          if (loading) loading.textContent = 'No history yet — run the agent first.';
+          return;
+        }
+        if (loading) loading.style.display = 'none';
+
+        const dates  = hist.map(h => h.date);
+        const values = hist.map(h => h.total_value);
+
+        // Add a 1,000 baseline reference line
+        Plotly.newPlot(el, [
+          {
+            x: dates, y: values,
+            type: 'scatter', mode: 'lines+markers', name: 'Portfolio',
+            fill: 'tozeroy', fillcolor: 'rgba(99,102,241,0.07)',
+            line: { color: '#6366f1', width: 2 },
+            marker: { size: 5, color: '#6366f1' },
+            hovertemplate: '<b>%{x}</b><br>%{y:.1f} pts<extra></extra>',
+          },
+          {
+            x: [dates[0], dates[dates.length - 1]], y: [1000, 1000],
+            type: 'scatter', mode: 'lines', name: 'Baseline (1,000)',
+            line: { color: '#94a3b8', width: 1, dash: 'dot' },
+            hoverinfo: 'skip',
+          },
+        ], {
+          height: 260, margin: { t: 8, b: 40, l: 60, r: 12 },
+          hovermode: 'x unified',
+          legend: { orientation: 'h', x: 0, y: 1.1 },
+          xaxis: { showgrid: false, tickfont: { size: 11, color: '#94a3b8' } },
+          yaxis: { showgrid: true, gridcolor: 'rgba(226,232,240,0.8)', tickfont: { size: 11, color: '#94a3b8' }, ticksuffix: ' pts' },
+          plot_bgcolor: 'white', paper_bgcolor: 'white',
+        }, { responsive: true, displayModeBar: false });
+      });
+
+    // ── Transaction log ────────────────────────────────────────────────────────
+    fetch('/api/transactions')
+      .then(r => r.json())
+      .then(txs => {
+        const tbody = document.getElementById('tx-tbody');
+        if (!txs || !txs.length) {
+          document.getElementById('tx-wrap').style.display = 'none';
+          document.getElementById('tx-empty').style.display = 'block';
+          return;
+        }
+        tbody.innerHTML = txs.map(tx => {
+          const isBuy  = tx.action === 'BUY';
+          const badge  = `<span class="badge badge-${isBuy ? 'buy' : 'sell'}">${esc(tx.action)}</span>`;
+          const pnlVal = tx.pnl;
+          return `<tr>
+            <td style="white-space:nowrap;color:#64748b;">${esc(tx.date)}</td>
+            <td>${badge}</td>
+            <td><a href="/stock/${esc(tx.ticker)}" style="color:#6366f1;font-weight:700;text-decoration:none;">${esc(tx.ticker)}</a></td>
+            <td>${fmtPts(tx.points)}</td>
+            <td>${fmtUSD(tx.price)}</td>
+            <td style="color:#94a3b8;">${tx.shares != null ? Number(tx.shares).toFixed(4) : '—'}</td>
+            <td class="${pnlClass(pnlVal)}">${pnlVal != null ? (pnlVal >= 0 ? '+' : '') + Number(pnlVal).toFixed(1) + ' pts' : '—'}</td>
+            <td style="color:#64748b;font-size:0.82rem;">${esc(tx.reasoning)}</td>
+          </tr>`;
+        }).join('');
+      });
+  </script>
+</body>
+</html>

@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run(tickers: list[str] | None = None, dry_run: bool = False, top_n: int = 30):
+def run(tickers: list[str] | None = None, dry_run: bool = False, top_n: int = 15):
     """
     Main weekly run.
 
@@ -165,8 +165,8 @@ if __name__ == "__main__":
         help="Run screener only — no LLM calls"
     )
     parser.add_argument(
-        "--top-n", type=int, default=30,
-        help="Number of top candidates to research (default: 30)"
+        "--top-n", type=int, default=15,
+        help="Number of top candidates to research (default: 15)"
     )
     parser.add_argument(
         "--schedule", action="store_true",

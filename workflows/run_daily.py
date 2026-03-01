@@ -34,7 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run(dry_run: bool = False, top_n: int = 20, watchlist_limit: int = 5):
+def run(dry_run: bool = False, top_n: int = 20, watchlist_limit: int = 50):
     """
     Full daily run: screener → researcher (non-held only) → portfolio manager.
 
@@ -98,7 +98,7 @@ def run(dry_run: bool = False, top_n: int = 20, watchlist_limit: int = 5):
     logger.info(f"Currently held: {sorted(held_tickers) or '(none)'}")
 
     # Research candidates not already in portfolio (up to 10 at a time to limit API cost)
-    to_research = [c for c in candidates if c["ticker"] not in held_tickers][:10]
+    to_research = [c for c in candidates if c["ticker"] not in held_tickers][:20]
 
     if to_research:
         # Use today's date as the run_date key for daily snapshots
@@ -195,8 +195,8 @@ if __name__ == "__main__":
         help="Number of screener candidates to use (default: 20)",
     )
     parser.add_argument(
-        "--watchlist-limit", type=int, default=5,
-        help="Number of watchlist stocks to process in the daily run (default: 5)",
+        "--watchlist-limit", type=int, default=50,
+        help="Number of watchlist stocks to process in the daily run (default: 50)",
     )
     args = parser.parse_args()
 

@@ -231,24 +231,42 @@
         });
     }
 
+    function exitMessage(code, label) {
+      if (code === 0)   return { color: '#16a34a', text: `${label} complete — reload to see updates.` };
+      if (code === -9)  return { color: '#dc2626', text: `${label} killed (out of memory). Try reducing stocks or upgrade Railway plan.` };
+      if (code === 1)   return { color: '#dc2626', text: `${label} failed — check Railway logs for errors.` };
+      return { color: '#dc2626', text: `${label} exited with code ${code} — check Railway logs.` };
+    }
+
     function pollStatus() {
       if (_statusPoller) clearInterval(_statusPoller);
+      let elapsed = 0;
       _statusPoller = setInterval(() => {
+        elapsed += 3;
         fetch('/api/trigger/daily/status')
           .then(r => r.json())
           .then(data => {
             const btn = document.getElementById('run-btn');
             const status = document.getElementById('run-status');
             if (data.status === 'running') {
-              status.textContent = 'Daily running…';
+              const mins = Math.floor(elapsed / 60), secs = elapsed % 60;
+              status.textContent = `Daily running… ${mins}m ${secs}s`;
             } else if (data.status === 'done') {
               clearInterval(_statusPoller);
-              status.style.color = data.exit_code === 0 ? '#16a34a' : '#dc2626';
-              status.textContent = data.exit_code === 0 ? 'Done! Reload to see updates.' : `Finished with errors (code ${data.exit_code}).`;
+              const { color, text } = exitMessage(data.exit_code, 'Daily run');
+              status.style.color = color;
+              status.textContent = text;
+              btn.disabled = false;
+              btn.style.opacity = '1';
+            } else if (data.status === 'never_run') {
+              clearInterval(_statusPoller);
+              status.style.color = '#dc2626';
+              status.textContent = 'Daily run did not start — check server logs.';
               btn.disabled = false;
               btn.style.opacity = '1';
             }
-          });
+          })
+          .catch(() => { /* keep polling on transient network errors */ });
       }, 3000);
     }
 
@@ -283,22 +301,33 @@
 
     function pollWeeklyStatus() {
       if (_weeklyPoller) clearInterval(_weeklyPoller);
+      let elapsed = 0;
       _weeklyPoller = setInterval(() => {
+        elapsed += 3;
         fetch('/api/trigger/weekly/status')
           .then(r => r.json())
           .then(data => {
             const btn = document.getElementById('weekly-btn');
             const status = document.getElementById('run-status');
             if (data.status === 'running') {
-              status.textContent = 'Weekly running…';
+              const mins = Math.floor(elapsed / 60), secs = elapsed % 60;
+              status.textContent = `Weekly running… ${mins}m ${secs}s`;
             } else if (data.status === 'done') {
               clearInterval(_weeklyPoller);
-              status.style.color = data.exit_code === 0 ? '#16a34a' : '#dc2626';
-              status.textContent = data.exit_code === 0 ? 'Weekly done! Reload to see updates.' : `Weekly finished with errors (code ${data.exit_code}).`;
+              const { color, text } = exitMessage(data.exit_code, 'Weekly run');
+              status.style.color = color;
+              status.textContent = text;
+              btn.disabled = false;
+              btn.style.opacity = '1';
+            } else if (data.status === 'never_run') {
+              clearInterval(_weeklyPoller);
+              status.style.color = '#dc2626';
+              status.textContent = 'Weekly run did not start — check server logs.';
               btn.disabled = false;
               btn.style.opacity = '1';
             }
-          });
+          })
+          .catch(() => { /* keep polling on transient network errors */ });
       }, 3000);
     }
 

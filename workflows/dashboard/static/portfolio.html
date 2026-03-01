@@ -214,6 +214,7 @@
       fetch('/api/trigger/daily', { method: 'POST', headers: { 'X-Trigger-Password': password } })
         .then(r => {
           if (r.status === 401) throw new Error('wrong_password');
+          if (!r.ok) throw new Error(`server_error_${r.status}`);
           return r.json();
         })
         .then(data => {
@@ -222,7 +223,9 @@
         })
         .catch(e => {
           status.style.color = '#dc2626';
-          status.textContent = e.message === 'wrong_password' ? 'Incorrect password.' : 'Failed to start.';
+          if (e.message === 'wrong_password') status.textContent = 'Incorrect password.';
+          else if (e.message.startsWith('server_error_503')) status.textContent = 'TRIGGER_PASSWORD not set on server.';
+          else status.textContent = `Failed to start (${e.message}).`;
           btn.disabled = false;
           btn.style.opacity = '1';
         });
@@ -261,6 +264,7 @@
       fetch('/api/trigger/weekly', { method: 'POST', headers: { 'X-Trigger-Password': password } })
         .then(r => {
           if (r.status === 401) throw new Error('wrong_password');
+          if (!r.ok) throw new Error(`server_error_${r.status}`);
           return r.json();
         })
         .then(data => {
@@ -269,7 +273,9 @@
         })
         .catch(e => {
           status.style.color = '#dc2626';
-          status.textContent = e.message === 'wrong_password' ? 'Incorrect password.' : 'Failed to start weekly.';
+          if (e.message === 'wrong_password') status.textContent = 'Incorrect password.';
+          else if (e.message.startsWith('server_error_503')) status.textContent = 'TRIGGER_PASSWORD not set on server.';
+          else status.textContent = `Failed to start weekly (${e.message}).`;
           btn.disabled = false;
           btn.style.opacity = '1';
         });

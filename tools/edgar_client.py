@@ -10,10 +10,13 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 
-# On Railway (512 MB), edgartools is too memory-heavy — even the 8-K filing
-# index download causes OOM kills. Skip all EDGAR calls when on Railway.
-# Set EDGAR_SKIP=1 locally to test the low-memory path.
-_SKIP_EDGAR = bool(os.getenv("EDGAR_SKIP") or os.getenv("RAILWAY_ENVIRONMENT"))
+# On Railway (512 MB), loading full 10-Q documents causes OOM kills.
+# Skip MDA (and optionally all EDGAR) in low-memory environments.
+_SKIP_MDA   = bool(os.getenv("EDGAR_SKIP_MDA") or os.getenv("RAILWAY_ENVIRONMENT"))
+_SKIP_EDGAR = bool(os.getenv("EDGAR_SKIP"))  # full skip, manual only
+
+# Max 8-K filings to convert to pandas — limits memory on large companies.
+_MAX_8K_FILINGS = int(os.getenv("EDGAR_MAX_8K", "4"))
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +47,9 @@ def get_recent_8k_summaries(ticker: str, days: int = 30) -> list[dict]:
 
     try:
         filings = company.get_filings(form="8-K")
-        # Use to_pandas() — edgartools v5 __getitem__ has a pyarrow compatibility bug
-        df = filings.to_pandas()
+        # Slice to _MAX_8K_FILINGS before to_pandas() to limit memory usage.
+        # edgartools stores filings newest-first so [:N] gives the most recent N.
+        df = filings[:_MAX_8K_FILINGS].to_pandas()
         cutoff = date.today() - timedelta(days=days)
         results = []
 
@@ -70,7 +74,7 @@ def get_recent_8k_summaries(ticker: str, days: int = 30) -> list[dict]:
                 "description": str(row.get("primaryDocDescription") or row.get("items") or ""),
                 "items":       str(row.get("items") or ""),
             })
-            if len(results) >= 10:
+            if len(results) >= _MAX_8K_FILINGS:
                 break
 
         return results
@@ -158,16 +162,16 @@ def get_filing_summary(ticker: str, days_back: int = 30) -> dict:
     On Railway (_SKIP_EDGAR=True) returns empty stubs to avoid OOM.
     """
     if _SKIP_EDGAR:
-        logger.debug(f"[EDGAR] Skipping all EDGAR calls for {ticker} (low-memory mode)")
+        logger.debug(f"[EDGAR] Skipping all EDGAR calls for {ticker} (EDGAR_SKIP=1)")
         return {
             "recent_8k_events": [],
-            "recent_8k_text":   "EDGAR data not available in this environment.",
-            "mda_excerpt":      "10-Q MDA not available in this environment.",
+            "recent_8k_text":   "EDGAR data skipped.",
+            "mda_excerpt":      "10-Q MDA skipped.",
         }
 
     recent_8ks = get_recent_8k_summaries(ticker, days=days_back)
     time.sleep(0.2)
-    mda = get_latest_10q_mda(ticker)
+    mda = None if _SKIP_MDA else get_latest_10q_mda(ticker)
 
     events_text = ""
     if recent_8ks:

@@ -67,6 +67,10 @@
       </div>
       <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
         <span id="run-status" style="font-size:0.8rem; color:#94a3b8;"></span>
+        <button id="weekly-btn" onclick="triggerWeeklyRun()"
+          style="background:white; color:#4f46e5; border:1.5px solid #4f46e5; border-radius:8px; padding:8px 18px; font-size:0.875rem; font-weight:600; cursor:pointer; transition:opacity 0.15s;">
+          ▶ Run Weekly Agent
+        </button>
         <button id="run-btn" onclick="triggerDailyRun()"
           style="background:linear-gradient(135deg,#4f46e5,#6366f1); color:white; border:none; border-radius:8px; padding:8px 18px; font-size:0.875rem; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(79,70,229,0.35); transition:opacity 0.15s;">
           ▶ Run Daily Agent
@@ -238,14 +242,69 @@
       }, 3000);
     }
 
-    // Check on page load if a run is already in progress
+    // Check on page load if a daily run is already in progress
     fetch('/api/trigger/daily/status').then(r => r.json()).then(data => {
       if (data.status === 'running') {
         const btn = document.getElementById('run-btn');
         btn.disabled = true;
         btn.style.opacity = '0.6';
-        document.getElementById('run-status').textContent = 'Running…';
+        document.getElementById('run-status').textContent = 'Daily running…';
         pollStatus();
+      }
+    });
+
+    // ── Weekly run trigger ─────────────────────────────────────────────────────
+    let _weeklyPoller = null;
+
+    function triggerWeeklyRun() {
+      const btn = document.getElementById('weekly-btn');
+      const status = document.getElementById('run-status');
+      btn.disabled = true;
+      btn.style.opacity = '0.6';
+      status.style.color = '#94a3b8';
+      status.textContent = 'Starting weekly…';
+      fetch('/api/trigger/weekly', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          status.textContent = data.status === 'already_running' ? 'Weekly already running…' : 'Weekly running…';
+          pollWeeklyStatus();
+        })
+        .catch(() => {
+          status.textContent = 'Failed to start weekly.';
+          btn.disabled = false;
+          btn.style.opacity = '1';
+        });
+    }
+
+    function pollWeeklyStatus() {
+      if (_weeklyPoller) clearInterval(_weeklyPoller);
+      _weeklyPoller = setInterval(() => {
+        fetch('/api/trigger/weekly/status')
+          .then(r => r.json())
+          .then(data => {
+            const btn = document.getElementById('weekly-btn');
+            const status = document.getElementById('run-status');
+            if (data.status === 'running') {
+              status.textContent = 'Weekly running…';
+            } else if (data.status === 'done') {
+              clearInterval(_weeklyPoller);
+              status.style.color = data.exit_code === 0 ? '#16a34a' : '#dc2626';
+              status.textContent = data.exit_code === 0 ? 'Weekly done! Reload to see updates.' : `Weekly finished with errors (code ${data.exit_code}).`;
+              btn.disabled = false;
+              btn.style.opacity = '1';
+            }
+          });
+      }, 3000);
+    }
+
+    // Check on page load if a weekly run is already in progress
+    fetch('/api/trigger/weekly/status').then(r => r.json()).then(data => {
+      if (data.status === 'running') {
+        const btn = document.getElementById('weekly-btn');
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+        document.getElementById('run-status').textContent = 'Weekly running…';
+        pollWeeklyStatus();
       }
     });
 

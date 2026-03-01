@@ -171,6 +171,7 @@ def api_learning():
 # ── Admin / trigger routes ─────────────────────────────────────────────────────
 
 _daily_run_process: Optional[subprocess.Popen] = None
+_weekly_run_process: Optional[subprocess.Popen] = None
 
 @app.post("/api/trigger/daily")
 def trigger_daily_run():
@@ -191,6 +192,28 @@ def trigger_daily_status():
     code = _daily_run_process.poll()
     if code is None:
         return {"status": "running", "pid": _daily_run_process.pid}
+    return {"status": "done", "exit_code": code}
+
+
+@app.post("/api/trigger/weekly")
+def trigger_weekly_run():
+    global _weekly_run_process
+    if _weekly_run_process and _weekly_run_process.poll() is None:
+        return JSONResponse({"status": "already_running", "message": "Weekly run is already in progress."})
+    _weekly_run_process = subprocess.Popen(
+        [sys.executable, "-m", "workflows.run_weekly"],
+        cwd=str(ROOT_DIR),
+    )
+    return {"status": "started", "pid": _weekly_run_process.pid, "message": "Weekly run started in background."}
+
+
+@app.get("/api/trigger/weekly/status")
+def trigger_weekly_status():
+    if _weekly_run_process is None:
+        return {"status": "never_run"}
+    code = _weekly_run_process.poll()
+    if code is None:
+        return {"status": "running", "pid": _weekly_run_process.pid}
     return {"status": "done", "exit_code": code}
 
 

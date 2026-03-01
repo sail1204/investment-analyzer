@@ -60,8 +60,19 @@
 
   <div style="padding: 24px 32px; max-width: 1400px; margin: 0 auto;">
 
-    <h1 style="font-size:1.5rem; font-weight:800; color:#0f172a; margin:0 0 4px; letter-spacing:-0.02em;">Paper Trading Portfolio</h1>
-    <p style="color:#94a3b8; font-size:0.875rem; margin:0 0 20px;">Starting budget: 1,000 pts &nbsp;·&nbsp; 1 point = $1 USD &nbsp;·&nbsp; Long only &nbsp;·&nbsp; Daily at noon</p>
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:20px;">
+      <div>
+        <h1 style="font-size:1.5rem; font-weight:800; color:#0f172a; margin:0 0 4px; letter-spacing:-0.02em;">Paper Trading Portfolio</h1>
+        <p style="color:#94a3b8; font-size:0.875rem; margin:0;">Starting budget: 1,000 pts &nbsp;·&nbsp; 1 point = $1 USD &nbsp;·&nbsp; Long only &nbsp;·&nbsp; Daily at noon</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+        <span id="run-status" style="font-size:0.8rem; color:#94a3b8;"></span>
+        <button id="run-btn" onclick="triggerDailyRun()"
+          style="background:linear-gradient(135deg,#4f46e5,#6366f1); color:white; border:none; border-radius:8px; padding:8px 18px; font-size:0.875rem; font-weight:600; cursor:pointer; box-shadow:0 2px 6px rgba(79,70,229,0.35); transition:opacity 0.15s;">
+          ▶ Run Daily Agent
+        </button>
+      </div>
+    </div>
 
     <!-- KPI strip -->
     <div class="kpi-grid" id="kpi-strip">
@@ -178,6 +189,65 @@
       const diff = Math.floor((Date.now() - d.getTime()) / 86400000);
       return diff;
     }
+
+    // ── Daily run trigger ──────────────────────────────────────────────────────
+    let _statusPoller = null;
+
+    function triggerDailyRun() {
+      const btn = document.getElementById('run-btn');
+      const status = document.getElementById('run-status');
+      btn.disabled = true;
+      btn.style.opacity = '0.6';
+      status.textContent = 'Starting…';
+      fetch('/api/trigger/daily', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'already_running') {
+            status.textContent = 'Already running…';
+            pollStatus();
+          } else {
+            status.textContent = 'Running…';
+            pollStatus();
+          }
+        })
+        .catch(() => {
+          status.textContent = 'Failed to start.';
+          btn.disabled = false;
+          btn.style.opacity = '1';
+        });
+    }
+
+    function pollStatus() {
+      if (_statusPoller) clearInterval(_statusPoller);
+      _statusPoller = setInterval(() => {
+        fetch('/api/trigger/daily/status')
+          .then(r => r.json())
+          .then(data => {
+            const btn = document.getElementById('run-btn');
+            const status = document.getElementById('run-status');
+            if (data.status === 'running') {
+              status.textContent = 'Running…';
+            } else if (data.status === 'done') {
+              clearInterval(_statusPoller);
+              status.style.color = data.exit_code === 0 ? '#16a34a' : '#dc2626';
+              status.textContent = data.exit_code === 0 ? 'Done! Reload to see updates.' : `Finished with errors (code ${data.exit_code}).`;
+              btn.disabled = false;
+              btn.style.opacity = '1';
+            }
+          });
+      }, 3000);
+    }
+
+    // Check on page load if a run is already in progress
+    fetch('/api/trigger/daily/status').then(r => r.json()).then(data => {
+      if (data.status === 'running') {
+        const btn = document.getElementById('run-btn');
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+        document.getElementById('run-status').textContent = 'Running…';
+        pollStatus();
+      }
+    });
 
     // ── KPI strip ──────────────────────────────────────────────────────────────
     fetch('/api/portfolio')

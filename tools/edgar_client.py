@@ -3,6 +3,7 @@ SEC EDGAR data client — 10-K, 10-Q, 8-K filings via edgartools.
 Free, official API. Rate limit: 10 requests/second.
 """
 
+import gc
 import time
 import logging
 from datetime import date, timedelta
@@ -95,20 +96,18 @@ def get_latest_10q_mda(ticker: str) -> Optional[str]:
 
         # edgartools exposes sections via .sections for XBRL-based filings
         mda_text = None
-        if hasattr(doc, "management_discussion_and_analysis"):
-            mda_text = doc.management_discussion_and_analysis
-        elif hasattr(doc, "mda"):
-            mda_text = doc.mda
+        try:
+            if hasattr(doc, "management_discussion_and_analysis"):
+                mda_text = str(doc.management_discussion_and_analysis)[:2000]
+            elif hasattr(doc, "mda"):
+                mda_text = str(doc.mda)[:2000]
+            elif hasattr(doc, "text"):
+                mda_text = str(doc.text)[:2000]
+        finally:
+            del doc
+            gc.collect()
 
-        if mda_text:
-            # Return up to 3000 characters — enough for LLM context
-            return str(mda_text)[:3000]
-
-        # Fallback: use the full text excerpt
-        if hasattr(doc, "text"):
-            return str(doc.text)[:3000]
-
-        return None
+        return mda_text
     except Exception as e:
         logger.warning(f"[EDGAR] 10-Q MDA failed for {ticker}: {e}")
         return None

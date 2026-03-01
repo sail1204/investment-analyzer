@@ -169,6 +169,31 @@ def api_learning():
     }
 
 
+# ── Debug ──────────────────────────────────────────────────────────────────────
+
+@app.get("/api/debug/db")
+def debug_db():
+    import sqlite3 as _sqlite3
+    from memory.database import DB_PATH
+    import os
+    path = str(DB_PATH)
+    exists = os.path.exists(path)
+    size = os.path.getsize(path) if exists else 0
+    run_dates = []
+    if exists:
+        try:
+            conn = _sqlite3.connect(path)
+            conn.row_factory = _sqlite3.Row
+            rows = conn.execute(
+                "SELECT run_date, COUNT(*) as cnt FROM stock_snapshots GROUP BY run_date ORDER BY run_date DESC"
+            ).fetchall()
+            run_dates = [{"run_date": r["run_date"], "snapshots": r["cnt"]} for r in rows]
+            conn.close()
+        except Exception as e:
+            run_dates = [{"error": str(e)}]
+    return {"db_path": path, "exists": exists, "size_bytes": size, "run_dates": run_dates}
+
+
 # ── Admin / trigger routes ─────────────────────────────────────────────────────
 
 _daily_run_process: Optional[subprocess.Popen] = None

@@ -3,8 +3,13 @@ set -e
 
 echo "=== Investment Analyzer startup ==="
 
-# Init DB and seed watchlist (idempotent — safe to run every time)
-python3 -m memory.database
+# Ensure the DB directory exists (required when Railway mounts a volume at /app/data)
+DB_DIR="$(dirname "${DB_PATH:-memory/investment_analyzer.db}")"
+mkdir -p "$DB_DIR"
+echo "DB directory: $DB_DIR"
+
+# Init DB and seed watchlist — non-fatal so the dashboard always starts
+python3 -m memory.database || echo "WARNING: DB init returned non-zero, continuing..."
 
 # Check portfolio and optionally seed — run in background so dashboard starts immediately
 (

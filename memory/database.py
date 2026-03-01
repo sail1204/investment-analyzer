@@ -8,7 +8,7 @@ import os
 from datetime import datetime, date
 from typing import Optional
 
-DB_PATH = os.getenv("DB_PATH", "data/investment_analyzer.db")
+DB_PATH = os.getenv("DB_PATH", "memory/investment_analyzer.db")
 
 
 def get_connection() -> sqlite3.Connection:
@@ -74,6 +74,54 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_corrections_ticker
                 ON correction_log(ticker);
 
+            CREATE TABLE IF NOT EXISTS learning_state (
+                state_type       TEXT NOT NULL,
+                state_key        TEXT NOT NULL,
+                value_json       TEXT NOT NULL,
+                updated_at       TEXT NOT NULL,
+                PRIMARY KEY (state_type, state_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS prompt_hints (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_name      TEXT NOT NULL,
+                scope_type      TEXT NOT NULL,
+                scope_key       TEXT NOT NULL,
+                hint_text       TEXT NOT NULL,
+                strength        REAL DEFAULT 1.0,
+                updated_at      TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_learning_state_type_key
+                ON learning_state(state_type, state_key);
+            CREATE INDEX IF NOT EXISTS idx_prompt_hints_agent_scope
+                ON prompt_hints(agent_name, scope_type, scope_key);
+
+            CREATE TABLE IF NOT EXISTS learning_state_history (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_date         TEXT NOT NULL,
+                state_type       TEXT NOT NULL,
+                state_key        TEXT NOT NULL,
+                value_json       TEXT NOT NULL,
+                updated_at       TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS prompt_hint_history (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_date         TEXT NOT NULL,
+                agent_name       TEXT NOT NULL,
+                scope_type       TEXT NOT NULL,
+                scope_key        TEXT NOT NULL,
+                hint_text        TEXT NOT NULL,
+                strength         REAL DEFAULT 1.0,
+                updated_at       TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_learning_state_history_run
+                ON learning_state_history(run_date, state_type, state_key);
+            CREATE INDEX IF NOT EXISTS idx_prompt_hint_history_run
+                ON prompt_hint_history(run_date, agent_name, scope_type, scope_key);
+
             -- ── Paper trading tables ──────────────────────────────────────────
             CREATE TABLE IF NOT EXISTS portfolio (
                 ticker          TEXT PRIMARY KEY,
@@ -82,6 +130,11 @@ def init_db():
                 buy_price       REAL NOT NULL,
                 shares          REAL NOT NULL,
                 buy_date        TEXT NOT NULL,
+                thesis_run_date TEXT,
+                thesis          TEXT,
+                thesis_conviction INTEGER,
+                thesis_signal   TEXT,
+                thesis_catalyst TEXT,
                 current_price   REAL,
                 current_value   REAL,
                 unrealized_pnl  REAL
@@ -95,6 +148,11 @@ def init_db():
                 points    REAL NOT NULL,
                 price     REAL NOT NULL,
                 shares    REAL NOT NULL,
+                thesis_run_date TEXT,
+                thesis    TEXT,
+                thesis_conviction INTEGER,
+                thesis_signal TEXT,
+                thesis_catalyst TEXT,
                 reasoning TEXT,
                 pnl       REAL
             );
@@ -109,10 +167,26 @@ def init_db():
                 positions_count INTEGER
             );
         """)
+        _ensure_column(conn, "portfolio", "thesis_run_date", "TEXT")
+        _ensure_column(conn, "portfolio", "thesis", "TEXT")
+        _ensure_column(conn, "portfolio", "thesis_conviction", "INTEGER")
+        _ensure_column(conn, "portfolio", "thesis_signal", "TEXT")
+        _ensure_column(conn, "portfolio", "thesis_catalyst", "TEXT")
+        _ensure_column(conn, "transactions", "thesis_run_date", "TEXT")
+        _ensure_column(conn, "transactions", "thesis", "TEXT")
+        _ensure_column(conn, "transactions", "thesis_conviction", "INTEGER")
+        _ensure_column(conn, "transactions", "thesis_signal", "TEXT")
+        _ensure_column(conn, "transactions", "thesis_catalyst", "TEXT")
     print(f"[DB] Initialized database at {DB_PATH}")
 
 
-def load_watchlist_from_json(json_path: str = "data/watchlist.json"):
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type: str):
+    existing = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    if column not in {row["name"] for row in existing}:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def load_watchlist_from_json(json_path: str = "memory/watchlist.json"):
     """Seed the watchlist table from watchlist.json (idempotent)."""
     with open(json_path) as f:
         data = json.load(f)
@@ -244,6 +318,200 @@ def get_all_corrections() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_learning_rows(limit: int = 200) -> list[dict]:
+    """
+    Return correction rows joined with current-run snapshot context.
+    Used by the deterministic learning pass.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                c.run_date,
+                c.ticker,
+                c.drift_signal,
+                c.error_type,
+                c.agents_explanation,
+                s.sector,
+                s.value_score,
+                s.quality_score,
+                s.conviction,
+                s.valuation_signal
+            FROM correction_log c
+            LEFT JOIN stock_snapshots s
+              ON s.run_date = c.run_date AND s.ticker = c.ticker
+            ORDER BY c.run_date DESC, c.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def replace_learning_state(rows: list[dict], run_date: str):
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with get_connection() as conn:
+        conn.execute("DELETE FROM learning_state")
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO learning_state (state_type, state_key, value_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    row["state_type"],
+                    row["state_key"],
+                    json.dumps(row["value"]),
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO learning_state_history (run_date, state_type, state_key, value_json, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    run_date,
+                    row["state_type"],
+                    row["state_key"],
+                    json.dumps(row["value"]),
+                    now,
+                ),
+            )
+
+
+def replace_prompt_hints(rows: list[dict], run_date: str):
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with get_connection() as conn:
+        conn.execute("DELETE FROM prompt_hints")
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO prompt_hints (agent_name, scope_type, scope_key, hint_text, strength, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["agent_name"],
+                    row["scope_type"],
+                    row["scope_key"],
+                    row["hint_text"],
+                    row.get("strength", 1.0),
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO prompt_hint_history (run_date, agent_name, scope_type, scope_key, hint_text, strength, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_date,
+                    row["agent_name"],
+                    row["scope_type"],
+                    row["scope_key"],
+                    row["hint_text"],
+                    row.get("strength", 1.0),
+                    now,
+                ),
+            )
+
+
+def get_learning_state(state_type: str, state_key: str) -> Optional[dict]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT value_json FROM learning_state WHERE state_type = ? AND state_key = ?",
+            (state_type, state_key),
+        ).fetchone()
+    return json.loads(row["value_json"]) if row else None
+
+
+def get_prompt_hints(agent_name: str, scope_pairs: list[tuple[str, str]], limit: int = 6) -> list[dict]:
+    if not scope_pairs:
+        return []
+    placeholders = " OR ".join(["(scope_type = ? AND scope_key = ?)"] * len(scope_pairs))
+    params: list = [agent_name]
+    for scope_type, scope_key in scope_pairs:
+        params.extend([scope_type, scope_key])
+    params.append(limit)
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT agent_name, scope_type, scope_key, hint_text, strength, updated_at
+            FROM prompt_hints
+            WHERE agent_name = ? AND ({placeholders})
+            ORDER BY strength DESC, updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_learning_state() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT state_type, state_key, value_json, updated_at
+            FROM learning_state
+            ORDER BY state_type, state_key
+            """
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["value"] = json.loads(item.pop("value_json"))
+        result.append(item)
+    return result
+
+
+def get_all_prompt_hints(limit: int = 100) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT agent_name, scope_type, scope_key, hint_text, strength, updated_at
+            FROM prompt_hints
+            ORDER BY agent_name, strength DESC, updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_learning_state_history(limit: int = 200) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT run_date, state_type, state_key, value_json, updated_at
+            FROM learning_state_history
+            ORDER BY run_date DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["value"] = json.loads(item.pop("value_json"))
+        result.append(item)
+    return result
+
+
+def get_prompt_hint_history(limit: int = 200) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT run_date, agent_name, scope_type, scope_key, hint_text, strength, updated_at
+            FROM prompt_hint_history
+            ORDER BY run_date DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_available_run_dates() -> list[str]:
     with get_connection() as conn:
         rows = conn.execute(
@@ -303,6 +571,46 @@ def get_transactions(limit: int = 200) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM transactions ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_trade_attribution(limit: int = 200) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                sell.id AS sell_tx_id,
+                sell.date AS sell_date,
+                sell.ticker,
+                sell.points AS sell_points,
+                sell.price AS sell_price,
+                sell.pnl AS realized_pnl,
+                buy.id AS buy_tx_id,
+                buy.date AS buy_date,
+                buy.points AS buy_points,
+                buy.price AS buy_price,
+                buy.thesis_run_date,
+                buy.thesis,
+                buy.thesis_conviction,
+                buy.thesis_signal,
+                buy.thesis_catalyst
+            FROM transactions sell
+            LEFT JOIN transactions buy
+              ON buy.id = (
+                SELECT b.id
+                FROM transactions b
+                WHERE b.ticker = sell.ticker
+                  AND b.action = 'BUY'
+                  AND b.id < sell.id
+                ORDER BY b.id DESC
+                LIMIT 1
+              )
+            WHERE sell.action = 'SELL'
+            ORDER BY sell.id DESC
+            LIMIT ?
+            """,
+            (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
 

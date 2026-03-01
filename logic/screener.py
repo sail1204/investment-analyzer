@@ -9,13 +9,13 @@ Scores each stock on:
 Returns a ranked shortlist of top candidates for deep research.
 """
 
-import json
 import logging
 import statistics
-from datetime import date, timedelta
 from typing import Optional
 
-from sources.finnhub_client import get_fundamentals, get_price_and_change
+from memory.database import get_learning_state
+from tools.finnhub_client import get_fundamentals, get_price_and_change
+from tools.sec_xbrl_client import get_companyfacts_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +23,26 @@ logger = logging.getLogger(__name__)
 VALUE_WEIGHT   = 0.55
 QUALITY_WEIGHT = 0.45
 
-# Metrics used for value scoring (lower is better for all of these)
-VALUE_METRICS = ["pe_ratio", "pb_ratio", "ev_ebitda"]
+# Metrics used for scoring. The screener treats missing metrics as optional
+# and computes averages from whatever is available for each stock.
+VALUE_METRICS = {
+    "pe_ratio": {"lower_is_better": True, "require_positive": True},
+    "pb_ratio": {"lower_is_better": True, "require_positive": True},
+    "ev_ebitda": {"lower_is_better": True, "require_positive": True},
+}
 
-# Metrics used for quality scoring (higher is better)
-QUALITY_METRICS = ["roe", "fcf_yield"]
+QUALITY_METRICS = {
+    "roe": {"lower_is_better": False, "require_positive": False},
+    "fcf_yield": {"lower_is_better": False, "require_positive": False},
+    "revenue_growth_yoy": {"lower_is_better": False, "require_positive": False},
+    "gross_margin": {"lower_is_better": False, "require_positive": False},
+    "gross_margin_delta_1y": {"lower_is_better": False, "require_positive": False},
+    "operating_margin": {"lower_is_better": False, "require_positive": False},
+    "fcf_margin": {"lower_is_better": False, "require_positive": False},
+    "current_ratio": {"lower_is_better": False, "require_positive": True},
+    "interest_coverage": {"lower_is_better": False, "require_positive": False},
+    "share_count_change_1y": {"lower_is_better": True, "require_positive": False},
+}
 
 # Anti-value-trap filter: exclude if 52-week return is worse than this threshold
 MIN_52W_RETURN = -45.0   # % — ignore companies in deep distress
@@ -59,25 +74,33 @@ def _percentile_rank(value: float, peer_values: list[float], lower_is_better: bo
     return (100 - pct) if lower_is_better else pct
 
 
+def _metric_usable(value: Optional[float], config: dict) -> bool:
+    if value is None:
+        return False
+    if config.get("require_positive") and value <= 0:
+        return False
+    return True
+
+
 def score_stock(metrics: dict, sector_medians: dict) -> dict:
     """
     Compute value_score, quality_score, composite_score for a single stock.
     All scores are 0–100.
     """
     value_scores = []
-    for metric in VALUE_METRICS:
+    for metric, config in VALUE_METRICS.items():
         val = _safe_float(metrics.get(metric))
         peers = sector_medians.get(metric, [])
-        if val is not None and val > 0:
-            s = _percentile_rank(val, peers, lower_is_better=True)
+        if _metric_usable(val, config):
+            s = _percentile_rank(val, peers, lower_is_better=config["lower_is_better"])
             value_scores.append(s)
 
     quality_scores = []
-    for metric in QUALITY_METRICS:
+    for metric, config in QUALITY_METRICS.items():
         val = _safe_float(metrics.get(metric))
         peers = sector_medians.get(metric, [])
-        if val is not None:
-            s = _percentile_rank(val, peers, lower_is_better=False)
+        if _metric_usable(val, config):
+            s = _percentile_rank(val, peers, lower_is_better=config["lower_is_better"])
             quality_scores.append(s)
 
     value_score   = statistics.mean(value_scores)   if value_scores   else 50.0
@@ -101,11 +124,18 @@ def build_sector_peer_lists(all_metrics: list[dict]) -> dict[str, dict[str, list
     for row in all_metrics:
         sector = row.get("sector", "Unknown")
         if sector not in sector_data:
-            sector_data[sector] = {m: [] for m in VALUE_METRICS + QUALITY_METRICS}
+            sector_data[sector] = {
+                m: [] for m in list(VALUE_METRICS.keys()) + list(QUALITY_METRICS.keys())
+            }
 
-        for metric in VALUE_METRICS + QUALITY_METRICS:
-            val = _safe_float(row.get("fundamentals", {}).get(metric))
-            if val is not None and val > 0:
+        merged_metrics = {
+            **row.get("fundamentals", {}),
+            **row.get("sec_metrics", {}),
+        }
+        metric_configs = {**VALUE_METRICS, **QUALITY_METRICS}
+        for metric, config in metric_configs.items():
+            val = _safe_float(merged_metrics.get(metric))
+            if _metric_usable(val, config):
                 sector_data[sector][metric].append(val)
 
     return sector_data
@@ -125,9 +155,9 @@ def run_screener(watchlist: list[dict], top_n: int = 30) -> list[dict]:
     """
     logger.info(f"[Screener] Starting screen for {len(watchlist)} stocks")
 
-    # Step 1: Fetch fundamentals and price for all stocks
-    # Finnhub free tier: 60 calls/min. Each stock = 2 calls (fundamentals + quote).
-    # 70 stocks × 2 = 140 calls — needs ~1.1s/stock to stay safely under limit.
+    # Step 1: Fetch fundamentals, price, and SEC metrics for all stocks.
+    # Finnhub is still the binding limit here: 2 calls/stock on the free tier.
+    # The SEC companyfacts request is free and comfortably within SEC guidance.
     import time as _time
     all_data = []
     for i, stock in enumerate(watchlist):
@@ -136,10 +166,12 @@ def run_screener(watchlist: list[dict], top_n: int = 30) -> list[dict]:
 
         fundamentals = get_fundamentals(ticker)
         price_data   = get_price_and_change(ticker)
+        sec_metrics  = get_companyfacts_metrics(ticker)
 
         all_data.append({
             **stock,
             "fundamentals":    fundamentals,
+            "sec_metrics":     sec_metrics,
             "price":           price_data.get("price"),
             "daily_change_pct": price_data.get("daily_change_pct"),
         })
@@ -154,6 +186,8 @@ def run_screener(watchlist: list[dict], top_n: int = 30) -> list[dict]:
     for row in all_data:
         ticker = row["ticker"]
         fund = row.get("fundamentals", {})
+        sec = row.get("sec_metrics", {})
+        merged_metrics = {**fund, **sec}
 
         # Anti-value-trap filter
         ret_52w = _safe_float(fund.get("52w_return"))
@@ -163,7 +197,10 @@ def run_screener(watchlist: list[dict], top_n: int = 30) -> list[dict]:
 
         sector = row.get("sector", "Unknown")
         peer_data = sector_peers.get(sector, {})
-        scores = score_stock(fund, peer_data)
+        scores = score_stock(merged_metrics, peer_data)
+        learning_state = get_learning_state("sector_learning", sector) or {}
+        learning_penalty = float(learning_state.get("sector_penalty") or 0.0)
+        adjusted_composite = max(0.0, scores["composite"] - learning_penalty)
 
         scored.append({
             "ticker":           ticker,
@@ -181,9 +218,19 @@ def run_screener(watchlist: list[dict], top_n: int = 30) -> list[dict]:
             "gross_margin":     _safe_float(fund.get("gross_margin")),
             "revenue_growth_3y": _safe_float(fund.get("revenue_growth_3y")),
             "52w_return":       _safe_float(fund.get("52w_return")),
+            "revenue_growth_yoy": _safe_float(sec.get("revenue_growth_yoy")),
+            "gross_margin_sec":   _safe_float(sec.get("gross_margin")),
+            "gross_margin_delta_1y": _safe_float(sec.get("gross_margin_delta_1y")),
+            "operating_margin":  _safe_float(sec.get("operating_margin")),
+            "fcf_margin":        _safe_float(sec.get("fcf_margin")),
+            "current_ratio":     _safe_float(sec.get("current_ratio")),
+            "interest_coverage": _safe_float(sec.get("interest_coverage")),
+            "share_count_change_1y": _safe_float(sec.get("share_count_change_1y")),
+            "learning_penalty":  learning_penalty,
+            "sector_caution_level": learning_state.get("caution_level", "normal"),
             "value_score":      scores["value_score"],
             "quality_score":    scores["quality_score"],
-            "composite_score":  scores["composite"],
+            "composite_score":  round(adjusted_composite, 1),
         })
 
     # Step 4: Sort by composite score descending
@@ -214,7 +261,7 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    from data.database import get_active_watchlist, init_db, load_watchlist_from_json
+    from memory.database import get_active_watchlist, init_db, load_watchlist_from_json
     init_db()
     load_watchlist_from_json()
 

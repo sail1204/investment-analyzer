@@ -15,11 +15,15 @@ from typing import Optional
 
 import anthropic
 
+from logic.evaluations.portfolio_manager_eval import evaluate_portfolio_manager_output
+from memory.database import get_latest_snapshot, get_prompt_hints
+
 logger = logging.getLogger(__name__)
 
 PORTFOLIO_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "portfolio_prompt.txt"
 PORTFOLIO_MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 1024
+MAX_EVAL_RETRIES = 1
 
 MIN_POINTS_PER_POSITION = 40
 MAX_POINTS_PER_POSITION = 200
@@ -53,7 +57,7 @@ def _get_current_price(ticker: str) -> Optional[float]:
 
 def refresh_prices(positions: list[dict]) -> list[dict]:
     """Update current_price, current_value, unrealized_pnl for each position."""
-    from data.database import upsert_position
+    from memory.database import upsert_position
 
     for pos in positions:
         ticker = pos["ticker"]
@@ -121,6 +125,30 @@ def _build_candidates_table(candidates: list[dict], held_tickers: set[str]) -> s
     return "\n".join(lines)
 
 
+def _enrich_candidates_with_snapshots(candidates: list[dict]) -> list[dict]:
+    enriched = []
+    for candidate in candidates:
+        latest_snapshot = get_latest_snapshot(candidate["ticker"]) or {}
+        enriched.append({
+            **candidate,
+            "thesis": latest_snapshot.get("thesis") or candidate.get("thesis"),
+            "valuation_signal": latest_snapshot.get("valuation_signal") or candidate.get("valuation_signal"),
+            "conviction": latest_snapshot.get("conviction") or candidate.get("conviction"),
+            "catalyst": latest_snapshot.get("catalyst") or candidate.get("catalyst"),
+            "snapshot_run_date": latest_snapshot.get("run_date"),
+        })
+    return enriched
+
+
+def _build_learning_hints(candidates: list[dict]) -> str:
+    sectors = sorted({c.get("sector", "Unknown") for c in candidates[:10] if c.get("sector")})
+    scope_pairs = [("global", "all")] + [("sector", sector) for sector in sectors]
+    hints = get_prompt_hints("portfolio_manager", scope_pairs, limit=5)
+    if not hints:
+        return "No persistent learning hints."
+    return "\n".join(f"- {row['hint_text']}" for row in hints)
+
+
 def _call_claude(prompt: str, client: anthropic.Anthropic) -> dict:
     message = client.messages.create(
         model=PORTFOLIO_MODEL,
@@ -178,7 +206,7 @@ def _validate_decisions(llm_out: dict, positions: list[dict], cash: float) -> di
 
 def execute_sells(sells: list[dict], positions: list[dict]) -> float:
     """Execute all sell orders. Returns total cash reclaimed."""
-    from data.database import get_cash_balance, insert_transaction, remove_position
+    from memory.database import get_cash_balance, insert_transaction, remove_position
 
     pos_map = {p["ticker"]: p for p in positions}
     total_reclaimed = 0.0
@@ -202,6 +230,11 @@ def execute_sells(sells: list[dict], positions: list[dict]) -> float:
             "points":    sell_value,
             "price":     sell_price,
             "shares":    pos["shares"],
+            "thesis_run_date": pos.get("thesis_run_date"),
+            "thesis":    pos.get("thesis"),
+            "thesis_conviction": pos.get("thesis_conviction"),
+            "thesis_signal": pos.get("thesis_signal"),
+            "thesis_catalyst": pos.get("thesis_catalyst"),
             "reasoning": sell.get("reasoning", ""),
             "pnl":       realized_pnl,
         })
@@ -216,7 +249,7 @@ def execute_sells(sells: list[dict], positions: list[dict]) -> float:
 
 def execute_buys(buys: list[dict], candidate_map: dict) -> None:
     """Execute all buy orders."""
-    from data.database import insert_transaction, upsert_position
+    from memory.database import insert_transaction, upsert_position
 
     today_str = date.today().isoformat()
 
@@ -240,6 +273,11 @@ def execute_buys(buys: list[dict], candidate_map: dict) -> None:
             "buy_price":       price,
             "shares":          shares,
             "buy_date":        today_str,
+            "thesis_run_date": candidate.get("snapshot_run_date"),
+            "thesis":          candidate.get("thesis"),
+            "thesis_conviction": candidate.get("conviction"),
+            "thesis_signal":   candidate.get("valuation_signal"),
+            "thesis_catalyst": candidate.get("catalyst"),
             "current_price":   price,
             "current_value":   round(points, 4),
             "unrealized_pnl":  0.0,
@@ -252,6 +290,11 @@ def execute_buys(buys: list[dict], candidate_map: dict) -> None:
             "points":    round(points, 4),
             "price":     price,
             "shares":    shares,
+            "thesis_run_date": candidate.get("snapshot_run_date"),
+            "thesis":    candidate.get("thesis"),
+            "thesis_conviction": candidate.get("conviction"),
+            "thesis_signal": candidate.get("valuation_signal"),
+            "thesis_catalyst": candidate.get("catalyst"),
             "reasoning": buy.get("reasoning", ""),
             "pnl":       None,
         })
@@ -266,7 +309,7 @@ def run_portfolio_manager(screener_candidates: list[dict]) -> dict:
     Main entry point. Reviews portfolio, calls Claude, executes decisions.
     Returns summary dict with {sells, buys, commentary, total_value, cash}.
     """
-    from data.database import (
+    from memory.database import (
         get_cash_balance, get_portfolio, insert_portfolio_snapshot,
     )
 
@@ -290,6 +333,7 @@ def run_portfolio_manager(screener_candidates: list[dict]) -> dict:
                 f"P&L: {total_pnl_pct:+.2f}%")
 
     # Step 3: Build and fill prompt
+    screener_candidates = _enrich_candidates_with_snapshots(screener_candidates)
     held_tickers = {p["ticker"] for p in positions}
     candidate_map = {c["ticker"]: c for c in screener_candidates}
 
@@ -301,6 +345,7 @@ def run_portfolio_manager(screener_candidates: list[dict]) -> dict:
         "{positions_count}": str(len(positions)),
         "{positions_table}": _build_positions_table(positions),
         "{candidates_table}":_build_candidates_table(screener_candidates, held_tickers),
+        "{learning_hints}":  _build_learning_hints(screener_candidates),
     }
     prompt = _load_prompt_template()
     for token, value in substitutions.items():
@@ -309,7 +354,17 @@ def run_portfolio_manager(screener_candidates: list[dict]) -> dict:
     # Step 4: Call Claude
     client = _get_client()
     try:
-        llm_out = _call_claude(prompt, client)
+        for attempt in range(MAX_EVAL_RETRIES + 1):
+            llm_out = _call_claude(prompt, client)
+            evaluation = evaluate_portfolio_manager_output(llm_out)
+            llm_out = evaluation.normalized_output
+            if not evaluation.should_retry:
+                break
+            logger.warning(
+                f"[PortfolioMgr] Output eval failed on attempt {attempt + 1}: {evaluation.issues}"
+            )
+            if attempt >= MAX_EVAL_RETRIES:
+                break
         logger.info(f"[PortfolioMgr] Claude decided: "
                     f"{len(llm_out.get('sells', []))} sells, "
                     f"{len(llm_out.get('buys', []))} buys")

@@ -17,6 +17,11 @@ TODAY'S SCREENER — TOP CANDIDATES
 {candidates_table}
 
 ═══════════════════════════════════════════════════════
+PERSISTENT LEARNING HINTS
+═══════════════════════════════════════════════════════
+{learning_hints}
+
+═══════════════════════════════════════════════════════
 CONSTRAINTS — READ CAREFULLY
 ═══════════════════════════════════════════════════════
 1. Long only. No short selling.

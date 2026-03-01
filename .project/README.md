@@ -12,7 +12,7 @@ Investment Analyzer is a personal AI system that does two things:
 
 2. **V2 — Daily Paper Trading Agent:** Manages a real (paper) 1,000-point portfolio, making actual buy and sell decisions every weekday at noon using Claude Sonnet.
 
-Most stock screeners give you a score. This system shows you the *reasoning* behind the score — and then holds itself accountable to that reasoning week over week.
+Most stock screeners give you a score. This system shows you the *reasoning* behind the score, tracks where that reasoning failed, and now feeds those failures back into future scoring and prompts.
 
 ---
 
@@ -87,11 +87,18 @@ When a thesis is wrong, the agent classifies the error type:
 
 Over time, this correction log becomes a track record. You can see which sectors the agent reasons well about, which error types recur, and whether higher conviction scores actually predict better outcomes.
 
+**Closed-loop learning layer**
+After weekly corrections are logged, a deterministic learning pass aggregates recent correction history with time decay. It derives:
+- **Sector caution state** — if a sector has elevated recent contradiction rates, future screener scores are penalized
+- **Persistent prompt hints** — recurring failure patterns (for example, repeated data gaps or thesis errors) are summarized and injected back into future LLM prompts
+
+This means the system is no longer just reviewing itself. It is carrying recent mistakes forward into future ranking and reasoning.
+
 ---
 
 ### V2 — Daily Paper Trading Pipeline
 
-Runs every weekday at 12:00 noon IST. Three steps:
+Runs every weekday at 12:00 noon IST. By default, the daily workflow processes a smaller 5-stock slice of the watchlist to keep iteration and cost tighter. Three steps:
 
 ```
 70 stocks in watchlist
@@ -143,8 +150,9 @@ Every decision has reasoning attached. Every trade is logged with that reasoning
 
 | Source | What It Provides | Why It Matters |
 |--------|-----------------|----------------|
-| **Finnhub** (free tier) | P/E, P/B, EV/EBITDA, FCF yield, ROE, debt/equity, earnings surprises | The core fundamental signals. Sector-normalized in the screener. |
+| **Finnhub** (free tier) | P/E, P/B, EV/EBITDA, FCF yield, ROE, debt/equity, earnings surprises | The core market and fundamental signals. |
 | **SEC EDGAR** | 10-Q management discussion, 8-K material events | What management is actually saying vs. what the market hears. 8-Ks catch material changes between quarters. |
+| **SEC XBRL companyfacts** | Revenue growth, margins, liquidity, interest coverage, share-count trend | Adds free structured quality factors to the screener. |
 | **Google News RSS** | Last 5 headlines per stock | Captures narrative shifts that don't show up in fundamentals yet. Macro fear, litigation, product launches. |
 | **yfinance** | Live prices for portfolio valuation + 1-year price history | Portfolio mark-to-market. Price chart context for the thesis. |
 
@@ -161,6 +169,7 @@ The agent does not use Reddit PRAW by default (optional, skipped if credentials 
 | **Stock Detail** (`/stock/TICKER`) | 1-year price chart, current fundamentals, Claude's thesis, key risk, catalyst, second-order effects. |
 | **Corrections** (`/corrections`) | Every week the agent reviewed its prior thesis. What changed, how the thesis drifted, error classification for wrong calls. |
 | **Accuracy** (`/accuracy`) | Drift signal breakdown (Stable/Updated/Contradicted). Error type pie chart. Weekly accuracy bar chart. |
+| **Learning** (`/learning`) | Current sector caution state, active prompt hints, and the timeline of how weekly corrections turned into course corrections over time. |
 
 ---
 
@@ -186,13 +195,16 @@ ANTHROPIC_API_KEY=sk-ant-...
 FINNHUB_API_KEY=your_key_here
 
 # 3. Initialize the database
-python3 -m data.database
+python3 -m memory.database
 
 # 4. Run the daily agent (full run)
-python3 -m agent.run_daily --force
+python3 -m workflows.run_daily --force
+
+# Optional: weekly research + learning pass
+python3 -m workflows.run_weekly
 
 # 5. Start the dashboard
-python3 -m dashboard.server
+python3 -m workflows.dashboard.server
 # Open: http://localhost:8080
 ```
 
@@ -208,6 +220,7 @@ python3 -m dashboard.server
 | Dashboard | FastAPI + vanilla HTML/JS | Switched from Streamlit → NiceGUI → FastAPI; both had row-click navigation bugs that couldn't be reliably fixed |
 | Charts | Plotly.js (CDN) | Client-side rendering, no server overhead |
 | Database | SQLite | Zero setup, persistent via Railway volume |
+| Learning loop | Deterministic correction aggregation + prompt hints | Converts recent mistakes into future caution state and prompt guidance |
 | Deployment | Railway | Persistent volume for SQLite, auto-deploy on push |
 
 ---

@@ -14,10 +14,12 @@ from typing import Optional
 
 import anthropic
 
-from sources.edgar_client import get_filing_summary
-from sources.finnhub_client import get_earnings_surprises, get_recommendation_trends
-from sources.news_client import get_stock_news, format_headlines_for_prompt
-from sources.reddit_client import get_reddit_summary
+from logic.evaluations.researcher_eval import evaluate_researcher_output
+from memory.database import get_prompt_hints
+from tools.edgar_client import get_filing_summary
+from tools.finnhub_client import get_earnings_surprises, get_recommendation_trends
+from tools.news_client import get_stock_news, format_headlines_for_prompt
+from tools.reddit_client import get_reddit_summary
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ THESIS_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "thesis_prompt.t
 # Model for thesis generation — highest quality reasoning
 THESIS_MODEL = "claude-sonnet-4-6"
 MAX_TOKENS   = 1024
+MAX_EVAL_RETRIES = 1
 
 
 def _load_prompt_template() -> str:
@@ -62,6 +65,17 @@ def _compute_sector_medians(all_candidates: list[dict]) -> dict[str, dict]:
             "fcf_yield": round(statistics.median(metrics["fcf_yield"]), 1) if metrics["fcf_yield"] else "N/A",
         }
     return medians
+
+
+def _format_learning_hints(agent_name: str, sector: str) -> str:
+    hints = get_prompt_hints(
+        agent_name,
+        [("global", "all"), ("sector", sector)],
+        limit=4,
+    )
+    if not hints:
+        return "No persistent learning hints."
+    return "\n".join(f"- {row['hint_text']}" for row in hints)
 
 
 def _format_val(val, suffix: str = "", default: str = "N/A") -> str:
@@ -122,6 +136,7 @@ def _build_prompt(candidate: dict, sector_medians: dict, news_from: str, news_to
         "{mda_excerpt}":              edgar["mda_excerpt"][:1500],
         "{headlines}":                headlines_text,
         "{reddit_summary}":           reddit["prompt_text"],
+        "{learning_hints}":           _format_learning_hints("researcher", sector),
     }
 
     prompt = _load_prompt_template()
@@ -165,9 +180,20 @@ def research_candidate(
     ticker = candidate["ticker"]
     logger.info(f"[Researcher] Researching {ticker}")
 
+    llm_out = None
     try:
-        prompt   = _build_prompt(candidate, sector_medians, news_from, news_to)
-        llm_out  = _call_claude(prompt, client)
+        prompt = _build_prompt(candidate, sector_medians, news_from, news_to)
+        for attempt in range(MAX_EVAL_RETRIES + 1):
+            llm_out = _call_claude(prompt, client)
+            evaluation = evaluate_researcher_output(llm_out)
+            llm_out = evaluation.normalized_output
+            if not evaluation.should_retry:
+                break
+            logger.warning(
+                f"[Researcher] Output eval failed for {ticker} on attempt {attempt + 1}: {evaluation.issues}"
+            )
+            if attempt >= MAX_EVAL_RETRIES:
+                break
     except json.JSONDecodeError as e:
         logger.warning(f"[Researcher] JSON parse failed for {ticker}: {e}")
         llm_out = {
@@ -182,6 +208,16 @@ def research_candidate(
         logger.warning(f"[Researcher] Claude call failed for {ticker}: {e}")
         llm_out = {
             "thesis":               f"Thesis generation failed: {e}",
+            "key_risk":             "N/A",
+            "catalyst":             "N/A",
+            "second_order_effects": [],
+            "conviction":           1,
+            "valuation_signal":     "Fair",
+        }
+
+    if llm_out is None:
+        llm_out = {
+            "thesis":               "Thesis generation failed — no output returned.",
             "key_risk":             "N/A",
             "catalyst":             "N/A",
             "second_order_effects": [],
@@ -254,7 +290,7 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    from data.database import current_run_date
+    from memory.database import current_run_date
 
     # Quick test with a mock candidate
     mock_candidate = {

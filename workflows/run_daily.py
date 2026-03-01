@@ -5,11 +5,13 @@ Daily orchestrator — runs the paper trading pipeline:
   3. Portfolio Manager (Claude buy/sell decisions)
 
 Usage:
-  python -m agent.run_daily                # run now (full run)
-  python -m agent.run_daily --dry-run      # screener only, no trades, no LLM
-  python -m agent.run_daily --force        # ignore weekday check, run now
-  python -m agent.run_daily --schedule     # start APScheduler (weekdays, noon)
-  python -m agent.run_daily --top-n 25     # override screener candidate count
+  python -m workflows.run_daily                 # run now (full run)
+  python -m workflows.run_daily --dry-run       # screener only, no trades, no LLM
+  python -m workflows.run_daily --force         # ignore weekday check, run now
+  python -m workflows.run_daily --schedule      # start APScheduler (weekdays, noon)
+  python -m workflows.run_daily --top-n 25      # override screener candidate count
+  python -m workflows.run_daily --watchlist-limit 5
+                                              # only process the first N watchlist stocks
 """
 
 import argparse
@@ -32,19 +34,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run(dry_run: bool = False, top_n: int = 20):
+def run(dry_run: bool = False, top_n: int = 20, watchlist_limit: int = 5):
     """
     Full daily run: screener → researcher (non-held only) → portfolio manager.
 
     Args:
         dry_run: if True, run screener only — no LLM calls, no trades
         top_n:   number of screener candidates to pass to the portfolio manager
+        watchlist_limit: number of watchlist stocks to process in the daily run
     """
-    from data.database import (
+    from memory.database import (
         init_db, load_watchlist_from_json, get_active_watchlist,
         get_portfolio, upsert_snapshot,
     )
-    from agent.screener import run_screener
+    from logic.screener import run_screener
     from agent.researcher import run_researcher
     from agent.portfolio_manager import run_portfolio_manager
 
@@ -63,6 +66,10 @@ def run(dry_run: bool = False, top_n: int = 20):
     if not watchlist:
         logger.error("No stocks in watchlist. Exiting.")
         return
+
+    if watchlist_limit > 0:
+        watchlist = watchlist[:watchlist_limit]
+        logger.info(f"Daily watchlist limited to {len(watchlist)} stocks")
 
     # ── Step 1: Screener ─────────────────────────────────────────────────────
     logger.info(f"\n── STEP 1: SCREENER ({len(watchlist)} stocks) ──")
@@ -96,7 +103,7 @@ def run(dry_run: bool = False, top_n: int = 20):
     if to_research:
         # Use today's date as the run_date key for daily snapshots
         # We reuse the weekly run_date format for compatibility with the dashboard
-        from data.database import current_run_date
+        from memory.database import current_run_date
         run_date = current_run_date()
 
         snapshots = run_researcher(to_research, run_date)
@@ -123,7 +130,7 @@ def run(dry_run: bool = False, top_n: int = 20):
     if commentary:
         logger.info(f"\n  Commentary: {commentary}")
     logger.info("=" * 60 + "\n")
-    logger.info("Dashboard: python -m dashboard.server")
+    logger.info("Dashboard: python -m workflows.dashboard.server")
 
     return result
 
@@ -187,11 +194,19 @@ if __name__ == "__main__":
         "--top-n", type=int, default=20,
         help="Number of screener candidates to use (default: 20)",
     )
+    parser.add_argument(
+        "--watchlist-limit", type=int, default=5,
+        help="Number of watchlist stocks to process in the daily run (default: 5)",
+    )
     args = parser.parse_args()
 
     if args.schedule:
         schedule_daily()
     elif args.force or _is_weekday():
-        run(dry_run=args.dry_run, top_n=args.top_n)
+        run(
+            dry_run=args.dry_run,
+            top_n=args.top_n,
+            watchlist_limit=args.watchlist_limit,
+        )
     else:
         logger.info("Today is a weekend. Use --force to run anyway.")

@@ -17,9 +17,9 @@ import pandas as pd
 import plotly.express as px
 from nicegui import ui
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from data.database import (
+from memory.database import (
     get_all_corrections,
     get_all_snapshots_for_run,
     get_available_run_dates,

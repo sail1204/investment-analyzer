@@ -3,9 +3,9 @@
 .env.*
 
 # Database (persisted by Railway volume, not in git)
-data/*.db
-data/*.db-shm
-data/*.db-wal
+memory/*.db
+memory/*.db-shm
+memory/*.db-wal
 
 # Edgar cache
 .edgar/
@@ -31,3 +31,4 @@ Thumbs.db
 
 # Logs
 *.log
+.claude/

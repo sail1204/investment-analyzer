@@ -52,6 +52,7 @@
       <a href="/portfolio" class="active">Portfolio</a>
       <a href="/corrections">Corrections</a>
       <a href="/accuracy">Accuracy</a>
+      <a href="/learning">Learning</a>
       <a href="/about">About</a>
       <a href="/changes">Changes</a>
     </nav>
@@ -130,6 +131,31 @@
             </tr>
           </thead>
           <tbody id="tx-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Trade Outcomes vs Original Thesis</div>
+      <div id="attr-empty" style="display:none; color:#94a3b8; text-align:center; padding:32px 0; font-size:0.875rem;">
+        No closed trades yet.
+      </div>
+      <div id="attr-wrap" style="overflow-x:auto;">
+        <table id="attr-table">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Buy Date</th>
+              <th>Sell Date</th>
+              <th>Realized P&amp;L</th>
+              <th>Thesis Week</th>
+              <th>Conviction</th>
+              <th>Signal</th>
+              <th style="min-width:260px;">Original Thesis</th>
+              <th style="min-width:220px;">Catalyst</th>
+            </tr>
+          </thead>
+          <tbody id="attr-tbody"></tbody>
         </table>
       </div>
     </div>
@@ -264,6 +290,30 @@
             <td style="color:#64748b;font-size:0.82rem;">${esc(tx.reasoning)}</td>
           </tr>`;
         }).join('');
+      });
+
+    fetch('/api/trade-attribution')
+      .then(r => r.json())
+      .then(rows => {
+        const tbody = document.getElementById('attr-tbody');
+        if (!rows || !rows.length) {
+          document.getElementById('attr-wrap').style.display = 'none';
+          document.getElementById('attr-empty').style.display = 'block';
+          return;
+        }
+        tbody.innerHTML = rows.map(row => `
+          <tr>
+            <td><a href="/stock/${esc(row.ticker)}" style="color:#6366f1;font-weight:700;text-decoration:none;">${esc(row.ticker)}</a></td>
+            <td style="white-space:nowrap;color:#64748b;">${esc(row.buy_date)}</td>
+            <td style="white-space:nowrap;color:#64748b;">${esc(row.sell_date)}</td>
+            <td class="${pnlClass(row.realized_pnl)}">${row.realized_pnl != null ? (row.realized_pnl >= 0 ? '+' : '') + Number(row.realized_pnl).toFixed(1) + ' pts' : '—'}</td>
+            <td style="white-space:nowrap;">${esc(row.thesis_run_date || '—')}</td>
+            <td>${row.thesis_conviction != null ? `<strong>${Number(row.thesis_conviction).toFixed(0)}</strong>/10` : '—'}</td>
+            <td>${esc(row.thesis_signal || '—')}</td>
+            <td style="font-size:0.82rem;color:#64748b;line-height:1.5;">${esc(row.thesis || 'No linked thesis stored.')}</td>
+            <td style="font-size:0.82rem;color:#64748b;line-height:1.5;">${esc(row.thesis_catalyst || '—')}</td>
+          </tr>
+        `).join('');
       });
   </script>
 </body>

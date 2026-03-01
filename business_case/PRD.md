@@ -27,7 +27,7 @@ Most stock screeners give you a number. None of them show you the reasoning behi
 | **LLM role** | Generate + correct thesis | Make buy/sell decisions |
 | **Output** | Research snapshots + corrections | Trades + equity curve |
 | **Budget** | N/A | 1,000 pts starting (1 pt = $1) |
-| **Run command** | `python -m agent.run_weekly` | `python -m agent.run_daily --force` |
+| **Run command** | `python -m workflows.run_weekly` | `python -m workflows.run_daily --force` |
 
 ---
 
@@ -158,35 +158,49 @@ Daily equity curve — total value, cash, invested, daily P&L, position count.
 
 ```
 investment-analyzer/
-├── PRD.md
+├── CLAUDE.md
+├── business_case/
+│   ├── PRD.md
+│   ├── business_case.md
+│   └── user_research.md
 ├── start.sh                     ← Railway startup: init DB → first-run agent (if empty) → scheduler → dashboard
-├── railway.toml                 ← Railway build config
 ├── requirements.txt
 ├── .gitignore                   ← Excludes .env, *.db, .claude/, .edgar/
+├── .project/
+│   ├── README.md
+│   ├── CHANGELOG.md
+│   ├── architecture.md
+│   ├── railway.toml
+│   ├── scaffold.md
+│   └── templates/
 ├── agent/
-│   ├── run_weekly.py            # Weekly orchestrator (screener → researcher → self-corrector)
-│   ├── run_daily.py             # Daily orchestrator (screener → researcher → portfolio manager)
-│   ├── screener.py              # Quant scoring + sector-relative ranking (no LLM)
 │   ├── researcher.py            # Data fetching + Claude thesis generation
 │   ├── self_corrector.py        # Prior week diff + Claude correction
 │   └── portfolio_manager.py    # Claude buy/sell decisions + trade execution
-├── data/
-│   ├── database.py              # SQLite schema + CRUD (5 tables)
-│   ├── watchlist.json           # 70 curated S&P 500 tickers
-│   └── investment_analyzer.db  # SQLite DB (gitignored, persisted via Railway volume)
-├── sources/
+├── logic/
+│   ├── screener.py              # Quant scoring + sector-relative ranking (no LLM)
+│   └── evaluations/            # Deterministic output quality checks for LLM agents
+├── tools/
 │   ├── finnhub_client.py
 │   ├── edgar_client.py
 │   ├── news_client.py
-│   └── reddit_client.py
-├── dashboard/
-│   ├── server.py                # FastAPI backend + API routes
-│   └── static/
-│       ├── index.html
-│       ├── portfolio.html
-│       ├── stock.html
-│       ├── corrections.html
-│       └── accuracy.html
+│   ├── reddit_client.py
+│   └── sec_xbrl_client.py
+├── workflows/
+│   ├── run_weekly.py            # Weekly orchestrator (screener → researcher → self-corrector)
+│   ├── run_daily.py             # Daily orchestrator (screener → researcher → portfolio manager)
+│   └── dashboard/
+│       ├── server.py            # FastAPI backend + API routes
+│       └── static/
+│           ├── index.html
+│           ├── portfolio.html
+│           ├── stock.html
+│           ├── corrections.html
+│           └── accuracy.html
+├── memory/
+│   ├── database.py              # SQLite schema + CRUD (5 tables)
+│   ├── watchlist.json           # 70 curated S&P 500 tickers
+│   └── investment_analyzer.db  # SQLite DB (gitignored, persisted via Railway volume)
 └── prompts/
     ├── thesis_prompt.txt
     ├── correction_prompt.txt
@@ -199,20 +213,20 @@ investment-analyzer/
 
 ```bash
 # Initialize DB + seed watchlist
-python3 -m data.database
+python3 -m memory.database
 
 # Daily paper trading (V2)
-python3 -m agent.run_daily --dry-run     # screener only, no trades
-python3 -m agent.run_daily --force       # full run regardless of weekday
-python3 -m agent.run_daily --schedule    # APScheduler, weekdays 12:00 noon
+python3 -m workflows.run_daily --dry-run     # screener only, no trades
+python3 -m workflows.run_daily --force       # full run regardless of weekday
+python3 -m workflows.run_daily --schedule    # APScheduler, weekdays 12:00 noon
 
 # Weekly research (V1)
-python3 -m agent.run_weekly --dry-run
-python3 -m agent.run_weekly --ticker CVS INTC BA
-python3 -m agent.run_weekly
+python3 -m workflows.run_weekly --dry-run
+python3 -m workflows.run_weekly --ticker CVS INTC BA
+python3 -m workflows.run_weekly
 
 # Local dashboard
-python3 -m dashboard.server   # http://localhost:8080
+python3 -m workflows.dashboard.server   # http://localhost:8080
 
 # Deploy to Railway
 railway up --detach
@@ -232,22 +246,22 @@ railway up --detach
 | GitHub | `github.com/sail1204/investment-analyzer` |
 | Build | Nixpacks (auto-detects Python) |
 | Start command | `bash start.sh` |
-| Volume | `/app/data` — persists SQLite across deploys |
-| DB path | `/app/data/investment_analyzer.db` (set via `DB_PATH` env var) |
+| Volume | `/app/memory` — persists SQLite across deploys |
+| DB path | `/app/memory/investment_analyzer.db` (set via `DB_PATH` env var) |
 
 ### Environment Variables (set in Railway)
 ```
 ANTHROPIC_API_KEY   = sk-ant-...
 FINNHUB_API_KEY     = d6hk1...
-DB_PATH             = /app/data/investment_analyzer.db
+DB_PATH             = /app/memory/investment_analyzer.db
 SCHEDULER_TZ        = Asia/Kolkata
 ```
 
 ### Startup Sequence (`start.sh`)
-1. `python3 -m data.database` — init DB schema + seed watchlist (idempotent)
-2. If portfolio is empty → run `agent.run_daily --force` (first-deploy auto-invest)
-3. `agent.run_daily --schedule &` — background scheduler (weekdays noon IST)
-4. `dashboard.server` — FastAPI foreground process (Railway health-checks this)
+1. `python3 -m memory.database` — init DB schema + seed watchlist (idempotent)
+2. If portfolio is empty → run `workflows.run_daily --force` (first-deploy auto-invest)
+3. `workflows.run_daily --schedule &` — background scheduler (weekdays noon IST)
+4. `workflows.dashboard.server` — FastAPI foreground process (Railway health-checks this)
 
 ### Deploy on Code Change
 ```bash
@@ -257,7 +271,7 @@ railway up --detach     # or push to GitHub if GitHub source is connected
 ```
 
 ### Data Safety
-Railway volumes are independent of container deployments. The SQLite file at `/app/data/investment_analyzer.db` survives all redeploys and restarts. The `start.sh` portfolio-count check prevents the agent from re-running (and re-investing) on restart.
+Railway volumes are independent of container deployments. The SQLite file at `/app/memory/investment_analyzer.db` survives all redeploys and restarts. The `start.sh` portfolio-count check prevents the agent from re-running (and re-investing) on restart.
 
 ---
 

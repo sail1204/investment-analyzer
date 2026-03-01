@@ -31,6 +31,9 @@ Fundamentals change (current vs prior week):
   EV/EBITDA: {prior_ev_ebitda} → {current_ev_ebitda}
   FCF Yield: {prior_fcf_yield}% → {current_fcf_yield}%
 
+PERSISTENT LEARNING HINTS:
+{learning_hints}
+
 ---
 
 TASK:

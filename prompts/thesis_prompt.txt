@@ -38,6 +38,9 @@ RECENT NEWS HEADLINES:
 REDDIT SENTIMENT (r/investing + r/stocks, past week):
 {reddit_summary}
 
+PERSISTENT LEARNING HINTS:
+{learning_hints}
+
 ---
 
 TASK:

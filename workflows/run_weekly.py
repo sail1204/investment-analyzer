@@ -5,9 +5,10 @@ Weekly orchestrator — runs all three agent steps in sequence:
   3. Self-Corrector (prior week diff → correction log)
 
 Usage:
-  python -m agent.run_weekly                  # run now
-  python -m agent.run_weekly --ticker AAPL    # single-stock test run
-  python -m agent.run_weekly --dry-run        # screener only, no LLM calls
+  python -m workflows.run_weekly              # run now
+  python -m workflows.run_weekly --ticker AAPL
+                                               # single-stock test run
+  python -m workflows.run_weekly --dry-run    # screener only, no LLM calls
 """
 
 import argparse
@@ -41,11 +42,12 @@ def run(tickers: list[str] | None = None, dry_run: bool = False, top_n: int = 30
         dry_run: if True, skip LLM calls (screener only)
         top_n:   number of shortlisted candidates for deep research
     """
-    from data.database import (
+    from memory.database import (
         init_db, load_watchlist_from_json, get_active_watchlist,
         upsert_snapshot, insert_correction, current_run_date,
     )
-    from agent.screener import run_screener
+    from logic.screener import run_screener
+    from workflows.run_learning import run as run_learning
     from agent.researcher import run_researcher
     from agent.self_corrector import run_self_corrector
 
@@ -108,12 +110,18 @@ def run(tickers: list[str] | None = None, dry_run: bool = False, top_n: int = 30
         insert_correction(correction)
     logger.info(f"Saved {len(corrections)} corrections to DB.")
 
+    # ── Step 4: Learning pass ───────────────────────────────────────────────
+    logger.info(f"\n── STEP 4: LEARNING ──")
+    learning_result = run_learning(run_date=run_date)
+
     # ── Summary ──────────────────────────────────────────────────────────────
     logger.info(f"\n{'='*60}")
     logger.info(f"  Run complete: {run_date}")
     logger.info(f"  Stocks screened:   {len(watchlist)}")
     logger.info(f"  Snapshots saved:   {len(snapshots)}")
     logger.info(f"  Corrections logged: {len(corrections)}")
+    logger.info(f"  Learning states:   {learning_result.get('learning_state_rows', 0)}")
+    logger.info(f"  Prompt hints:      {learning_result.get('prompt_hints', 0)}")
 
     if corrections:
         from collections import Counter
@@ -121,7 +129,7 @@ def run(tickers: list[str] | None = None, dry_run: bool = False, top_n: int = 30
         logger.info(f"  Thesis drift: {dict(drift_counts)}")
 
     logger.info(f"{'='*60}\n")
-    logger.info("Dashboard: run  streamlit run dashboard/app.py")
+    logger.info("Dashboard: python -m workflows.dashboard.server")
 
 
 def schedule_weekly():

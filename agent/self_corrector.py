@@ -13,8 +13,10 @@ from typing import Optional
 
 import anthropic
 
-from sources.edgar_client import get_filing_summary
-from sources.news_client import get_stock_news, format_headlines_for_prompt
+from logic.evaluations.self_corrector_eval import evaluate_self_corrector_output
+from memory.database import get_prompt_hints
+from tools.edgar_client import get_filing_summary
+from tools.news_client import get_stock_news, format_headlines_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,7 @@ CORRECTION_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "correction_
 
 CORRECTION_MODEL = "claude-haiku-4-5-20251001"
 MAX_TOKENS       = 768
+MAX_EVAL_RETRIES = 1
 
 
 def _load_prompt_template() -> str:
@@ -48,6 +51,17 @@ def _compute_price_change(current_price: Optional[float], prior_price: Optional[
     if current_price is None or prior_price is None or prior_price == 0:
         return None
     return round(((current_price - prior_price) / prior_price) * 100, 2)
+
+
+def _format_learning_hints(sector: str) -> str:
+    hints = get_prompt_hints(
+        "self_corrector",
+        [("global", "all"), ("sector", sector)],
+        limit=4,
+    )
+    if not hints:
+        return "No persistent learning hints."
+    return "\n".join(f"- {row['hint_text']}" for row in hints)
 
 
 def _call_claude(prompt: str, client: anthropic.Anthropic) -> dict:
@@ -82,6 +96,7 @@ def correct_single_stock(
     """
     ticker       = current_snapshot["ticker"]
     company_name = current_snapshot.get("company_name", ticker)
+    sector = current_snapshot.get("sector", "Unknown")
     logger.info(f"[SelfCorrector] Correcting {ticker}")
 
     # Compute price change
@@ -119,14 +134,26 @@ def correct_single_stock(
         "{current_ev_ebitda}":        _format_val(current_snapshot.get("ev_ebitda"), "x"),
         "{prior_fcf_yield}":          _format_val(prior_snapshot.get("fcf_yield")),
         "{current_fcf_yield}":        _format_val(current_snapshot.get("fcf_yield")),
+        "{learning_hints}":           _format_learning_hints(sector),
     }
 
     prompt = _load_prompt_template()
     for token, value in substitutions.items():
         prompt = prompt.replace(token, str(value))
 
+    llm_out = None
     try:
-        llm_out = _call_claude(prompt, client)
+        for attempt in range(MAX_EVAL_RETRIES + 1):
+            llm_out = _call_claude(prompt, client)
+            evaluation = evaluate_self_corrector_output(llm_out, prior_snapshot)
+            llm_out = evaluation.normalized_output
+            if not evaluation.should_retry:
+                break
+            logger.warning(
+                f"[SelfCorrector] Output eval failed for {ticker} on attempt {attempt + 1}: {evaluation.issues}"
+            )
+            if attempt >= MAX_EVAL_RETRIES:
+                break
     except json.JSONDecodeError as e:
         logger.warning(f"[SelfCorrector] JSON parse failed for {ticker}: {e}")
         llm_out = {
@@ -142,6 +169,15 @@ def correct_single_stock(
             "drift_signal":      "Stable",
             "error_type":        None,
             "explanation":       f"Self-correction failed: {e}",
+            "updated_thesis":    prior_snapshot.get("thesis", ""),
+            "updated_conviction": prior_snapshot.get("conviction"),
+        }
+
+    if llm_out is None:
+        llm_out = {
+            "drift_signal":      "Stable",
+            "error_type":        None,
+            "explanation":       "Self-correction returned no usable output.",
             "updated_thesis":    prior_snapshot.get("thesis", ""),
             "updated_conviction": prior_snapshot.get("conviction"),
         }
@@ -198,7 +234,7 @@ def run_self_corrector(
         list of correction_log dicts ready for DB insertion.
         Also mutates current_snapshots in-place (updates thesis, conviction, price_change_1w).
     """
-    from data.database import get_prior_snapshot
+    from memory.database import get_prior_snapshot
 
     client = _get_anthropic_client()
     corrections = []

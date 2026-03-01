@@ -13,15 +13,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from data.database import (
+from memory.database import (
     get_all_corrections,
+    get_all_learning_state,
+    get_all_prompt_hints,
     get_all_snapshots_for_run,
     get_available_run_dates,
     get_ticker_history,
     get_portfolio,
     get_portfolio_history,
+    get_prompt_hint_history,
+    get_learning_state_history,
+    get_trade_attribution,
     get_transactions,
     get_cash_balance,
     init_db,
@@ -32,7 +37,8 @@ init_db()
 app = FastAPI(title="Investment Analyzer API")
 
 STATIC_DIR = Path(__file__).parent / "static"
-ROOT_DIR = Path(__file__).parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[2]
+PROJECT_DIR = ROOT_DIR / ".project"
 
 # ── Price cache ────────────────────────────────────────────────────────────────
 _price_cache: dict = {}
@@ -108,12 +114,12 @@ def api_corrections():
 
 @app.get("/api/readme")
 def api_readme():
-    return PlainTextResponse((ROOT_DIR / "README.md").read_text())
+    return PlainTextResponse((PROJECT_DIR / "README.md").read_text())
 
 
 @app.get("/api/changelog")
 def api_changelog():
-    return PlainTextResponse((ROOT_DIR / "CHANGELOG.md").read_text())
+    return PlainTextResponse((PROJECT_DIR / "CHANGELOG.md").read_text())
 
 
 @app.get("/api/portfolio")
@@ -140,6 +146,25 @@ def api_portfolio_history():
 @app.get("/api/transactions")
 def api_transactions():
     return get_transactions(limit=500) or []
+
+
+@app.get("/api/trade-attribution")
+def api_trade_attribution():
+    return get_trade_attribution(limit=300) or []
+
+
+@app.get("/api/learning")
+def api_learning():
+    learning_state = get_all_learning_state() or []
+    prompt_hints = get_all_prompt_hints(limit=100) or []
+    learning_history = get_learning_state_history(limit=250) or []
+    prompt_hint_history = get_prompt_hint_history(limit=250) or []
+    return {
+        "current_state": learning_state,
+        "current_hints": prompt_hints,
+        "learning_history": learning_history,
+        "hint_history": prompt_hint_history,
+    }
 
 
 # ── HTML page routes ───────────────────────────────────────────────────────────
@@ -179,6 +204,11 @@ def page_changes():
     return FileResponse(STATIC_DIR / "changes.html")
 
 
+@app.get("/learning")
+def page_learning():
+    return FileResponse(STATIC_DIR / "learning.html")
+
+
 # Mount static assets (CSS overrides, any future assets)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -186,4 +216,4 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 if __name__ == "__main__":
     import os
     port = int(os.getenv("PORT", 8080))
-    uvicorn.run("dashboard.server:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("workflows.dashboard.server:app", host="0.0.0.0", port=port, reload=False)

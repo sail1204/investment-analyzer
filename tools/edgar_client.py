@@ -10,9 +10,10 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 
-# On Railway (512 MB), loading full 10-Q documents causes OOM kills.
-# Set EDGAR_SKIP_MDA=1 (or run on Railway) to skip the memory-heavy MDA fetch.
-_SKIP_MDA = bool(os.getenv("EDGAR_SKIP_MDA") or os.getenv("RAILWAY_ENVIRONMENT"))
+# On Railway (512 MB), edgartools is too memory-heavy — even the 8-K filing
+# index download causes OOM kills. Skip all EDGAR calls when on Railway.
+# Set EDGAR_SKIP=1 locally to test the low-memory path.
+_SKIP_EDGAR = bool(os.getenv("EDGAR_SKIP") or os.getenv("RAILWAY_ENVIRONMENT"))
 
 logger = logging.getLogger(__name__)
 
@@ -154,15 +155,19 @@ def get_filing_summary(ticker: str, days_back: int = 30) -> dict:
     """
     Convenience: get all recent EDGAR data for a ticker.
     Returns a summary dict with 8-K events and 10-Q MDA excerpt.
-    Skips the memory-heavy 10-Q MDA fetch on Railway (_SKIP_MDA=True).
+    On Railway (_SKIP_EDGAR=True) returns empty stubs to avoid OOM.
     """
+    if _SKIP_EDGAR:
+        logger.debug(f"[EDGAR] Skipping all EDGAR calls for {ticker} (low-memory mode)")
+        return {
+            "recent_8k_events": [],
+            "recent_8k_text":   "EDGAR data not available in this environment.",
+            "mda_excerpt":      "10-Q MDA not available in this environment.",
+        }
+
     recent_8ks = get_recent_8k_summaries(ticker, days=days_back)
     time.sleep(0.2)
-    if _SKIP_MDA:
-        logger.debug(f"[EDGAR] Skipping 10-Q MDA for {ticker} (low-memory mode)")
-        mda = None
-    else:
-        mda = get_latest_10q_mda(ticker)
+    mda = get_latest_10q_mda(ticker)
 
     events_text = ""
     if recent_8ks:

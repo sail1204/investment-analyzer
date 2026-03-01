@@ -194,28 +194,35 @@
       return diff;
     }
 
-    // ── Daily run trigger ──────────────────────────────────────────────────────
+    // ── Run triggers ───────────────────────────────────────────────────────────
     let _statusPoller = null;
+    let _weeklyPoller = null;
+
+    function promptPassword() {
+      return prompt('Enter password to trigger a run:');
+    }
 
     function triggerDailyRun() {
+      const password = promptPassword();
+      if (!password) return;
       const btn = document.getElementById('run-btn');
       const status = document.getElementById('run-status');
       btn.disabled = true;
       btn.style.opacity = '0.6';
+      status.style.color = '#94a3b8';
       status.textContent = 'Starting…';
-      fetch('/api/trigger/daily', { method: 'POST' })
-        .then(r => r.json())
-        .then(data => {
-          if (data.status === 'already_running') {
-            status.textContent = 'Already running…';
-            pollStatus();
-          } else {
-            status.textContent = 'Running…';
-            pollStatus();
-          }
+      fetch('/api/trigger/daily', { method: 'POST', headers: { 'X-Trigger-Password': password } })
+        .then(r => {
+          if (r.status === 401) throw new Error('wrong_password');
+          return r.json();
         })
-        .catch(() => {
-          status.textContent = 'Failed to start.';
+        .then(data => {
+          status.textContent = data.status === 'already_running' ? 'Already running…' : 'Running…';
+          pollStatus();
+        })
+        .catch(e => {
+          status.style.color = '#dc2626';
+          status.textContent = e.message === 'wrong_password' ? 'Incorrect password.' : 'Failed to start.';
           btn.disabled = false;
           btn.style.opacity = '1';
         });
@@ -230,7 +237,7 @@
             const btn = document.getElementById('run-btn');
             const status = document.getElementById('run-status');
             if (data.status === 'running') {
-              status.textContent = 'Running…';
+              status.textContent = 'Daily running…';
             } else if (data.status === 'done') {
               clearInterval(_statusPoller);
               status.style.color = data.exit_code === 0 ? '#16a34a' : '#dc2626';
@@ -242,35 +249,27 @@
       }, 3000);
     }
 
-    // Check on page load if a daily run is already in progress
-    fetch('/api/trigger/daily/status').then(r => r.json()).then(data => {
-      if (data.status === 'running') {
-        const btn = document.getElementById('run-btn');
-        btn.disabled = true;
-        btn.style.opacity = '0.6';
-        document.getElementById('run-status').textContent = 'Daily running…';
-        pollStatus();
-      }
-    });
-
-    // ── Weekly run trigger ─────────────────────────────────────────────────────
-    let _weeklyPoller = null;
-
     function triggerWeeklyRun() {
+      const password = promptPassword();
+      if (!password) return;
       const btn = document.getElementById('weekly-btn');
       const status = document.getElementById('run-status');
       btn.disabled = true;
       btn.style.opacity = '0.6';
       status.style.color = '#94a3b8';
       status.textContent = 'Starting weekly…';
-      fetch('/api/trigger/weekly', { method: 'POST' })
-        .then(r => r.json())
+      fetch('/api/trigger/weekly', { method: 'POST', headers: { 'X-Trigger-Password': password } })
+        .then(r => {
+          if (r.status === 401) throw new Error('wrong_password');
+          return r.json();
+        })
         .then(data => {
           status.textContent = data.status === 'already_running' ? 'Weekly already running…' : 'Weekly running…';
           pollWeeklyStatus();
         })
-        .catch(() => {
-          status.textContent = 'Failed to start weekly.';
+        .catch(e => {
+          status.style.color = '#dc2626';
+          status.textContent = e.message === 'wrong_password' ? 'Incorrect password.' : 'Failed to start weekly.';
           btn.disabled = false;
           btn.style.opacity = '1';
         });
@@ -297,12 +296,19 @@
       }, 3000);
     }
 
-    // Check on page load if a weekly run is already in progress
+    // Check on page load if any run is already in progress
+    fetch('/api/trigger/daily/status').then(r => r.json()).then(data => {
+      if (data.status === 'running') {
+        document.getElementById('run-btn').disabled = true;
+        document.getElementById('run-btn').style.opacity = '0.6';
+        document.getElementById('run-status').textContent = 'Daily running…';
+        pollStatus();
+      }
+    });
     fetch('/api/trigger/weekly/status').then(r => r.json()).then(data => {
       if (data.status === 'running') {
-        const btn = document.getElementById('weekly-btn');
-        btn.disabled = true;
-        btn.style.opacity = '0.6';
+        document.getElementById('weekly-btn').disabled = true;
+        document.getElementById('weekly-btn').style.opacity = '0.6';
         document.getElementById('run-status').textContent = 'Weekly running…';
         pollWeeklyStatus();
       }

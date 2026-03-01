@@ -3,6 +3,7 @@ FastAPI backend for Investment Analyzer dashboard.
 Serves JSON APIs + static HTML pages.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Optional
 
 import pandas as pd
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -173,8 +174,18 @@ def api_learning():
 _daily_run_process: Optional[subprocess.Popen] = None
 _weekly_run_process: Optional[subprocess.Popen] = None
 
+
+def _check_trigger_password(x_trigger_password: Optional[str] = Header(default=None)):
+    expected = os.getenv("TRIGGER_PASSWORD")
+    if not expected:
+        raise HTTPException(status_code=503, detail="TRIGGER_PASSWORD not configured on server.")
+    if x_trigger_password != expected:
+        raise HTTPException(status_code=401, detail="Invalid password.")
+
+
 @app.post("/api/trigger/daily")
-def trigger_daily_run():
+def trigger_daily_run(x_trigger_password: Optional[str] = Header(default=None)):
+    _check_trigger_password(x_trigger_password)
     global _daily_run_process
     if _daily_run_process and _daily_run_process.poll() is None:
         return JSONResponse({"status": "already_running", "message": "Daily run is already in progress."})
@@ -196,7 +207,8 @@ def trigger_daily_status():
 
 
 @app.post("/api/trigger/weekly")
-def trigger_weekly_run():
+def trigger_weekly_run(x_trigger_password: Optional[str] = Header(default=None)):
+    _check_trigger_password(x_trigger_password)
     global _weekly_run_process
     if _weekly_run_process and _weekly_run_process.poll() is None:
         return JSONResponse({"status": "already_running", "message": "Weekly run is already in progress."})

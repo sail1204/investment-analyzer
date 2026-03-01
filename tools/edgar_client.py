@@ -4,10 +4,15 @@ Free, official API. Rate limit: 10 requests/second.
 """
 
 import gc
+import os
 import time
 import logging
 from datetime import date, timedelta
 from typing import Optional
+
+# On Railway (512 MB), loading full 10-Q documents causes OOM kills.
+# Set EDGAR_SKIP_MDA=1 (or run on Railway) to skip the memory-heavy MDA fetch.
+_SKIP_MDA = bool(os.getenv("EDGAR_SKIP_MDA") or os.getenv("RAILWAY_ENVIRONMENT"))
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +154,15 @@ def get_filing_summary(ticker: str, days_back: int = 30) -> dict:
     """
     Convenience: get all recent EDGAR data for a ticker.
     Returns a summary dict with 8-K events and 10-Q MDA excerpt.
+    Skips the memory-heavy 10-Q MDA fetch on Railway (_SKIP_MDA=True).
     """
     recent_8ks = get_recent_8k_summaries(ticker, days=days_back)
     time.sleep(0.2)
-    mda = get_latest_10q_mda(ticker)
+    if _SKIP_MDA:
+        logger.debug(f"[EDGAR] Skipping 10-Q MDA for {ticker} (low-memory mode)")
+        mda = None
+    else:
+        mda = get_latest_10q_mda(ticker)
 
     events_text = ""
     if recent_8ks:

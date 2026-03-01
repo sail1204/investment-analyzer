@@ -3,6 +3,7 @@ FastAPI backend for Investment Analyzer dashboard.
 Serves JSON APIs + static HTML pages.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -10,7 +11,7 @@ from typing import Optional
 import pandas as pd
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -165,6 +166,32 @@ def api_learning():
         "learning_history": learning_history,
         "hint_history": prompt_hint_history,
     }
+
+
+# ── Admin / trigger routes ─────────────────────────────────────────────────────
+
+_daily_run_process: Optional[subprocess.Popen] = None
+
+@app.post("/api/trigger/daily")
+def trigger_daily_run():
+    global _daily_run_process
+    if _daily_run_process and _daily_run_process.poll() is None:
+        return JSONResponse({"status": "already_running", "message": "Daily run is already in progress."})
+    _daily_run_process = subprocess.Popen(
+        [sys.executable, "-m", "workflows.run_daily", "--force"],
+        cwd=str(ROOT_DIR),
+    )
+    return {"status": "started", "pid": _daily_run_process.pid, "message": "Daily run started in background."}
+
+
+@app.get("/api/trigger/daily/status")
+def trigger_daily_status():
+    if _daily_run_process is None:
+        return {"status": "never_run"}
+    code = _daily_run_process.poll()
+    if code is None:
+        return {"status": "running", "pid": _daily_run_process.pid}
+    return {"status": "done", "exit_code": code}
 
 
 # ── HTML page routes ───────────────────────────────────────────────────────────
